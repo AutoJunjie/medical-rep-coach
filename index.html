@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PharmaRep Coach</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        html, body {
+            height: 100%; /* Ensure html and body take full viewport height */
+            margin: 0;
+            padding: 0;
+            overflow: hidden; /* Prevent scrolling on the body itself */
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f9;
+            display: flex;
+            justify-content: center; /* Center the main-flex-container */
+            color: #333;
+            box-sizing: border-box; /* Include padding and border in element's total width and height */
+        }
+
+        .main-flex-container {
+            display: flex;
+            width: 100%;
+            max-width: 1200px; /* Adjust overall max width as needed */
+            margin: 20px; /* Provides some spacing from browser edges */
+            gap: 20px; /* Gap between left and right columns */
+            height: calc(100% - 40px); /* Full height minus top/bottom margin */
+            box-sizing: border-box;
+        }
+
+        .left-column {
+            flex: 2; /* Takes up 2/3 of the space */
+            display: flex;
+            flex-direction: column;
+            background-color: #fff;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            overflow: hidden; /* Prevent left-column itself from scrolling */
+        }
+
+        .right-column {
+            flex: 1; /* Takes up 1/3 of the space */
+            display: flex;
+            flex-direction: column;
+            gap: 20px; /* Gap between profile and evaluation area */
+            align-self: stretch; 
+            overflow: hidden; /* Prevent right-column itself from scrolling */
+        }
+
+        .doctor-profile-area {
+            background-color: #fff;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            padding: 20px;
+            flex-shrink: 0; /* Prevent shrinking, height based on content or fixed */
+            max-height: 250px; /* Optional: give profile a max height */
+            overflow-y: auto;  /* Scroll profile if its content is too tall */
+        }
+        
+        .realtime-evaluation-area {
+            background-color: #fff;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            padding: 20px;
+            flex-grow: 1; /* Allow this area to grow and fill available space */
+            display: flex; /* Enable flex for its children */
+            flex-direction: column; /* Stack title and content vertically */
+            min-height: 150px; /* Optional: ensure a minimum visible height */
+        }
+        
+        .doctor-profile-area h3, .realtime-evaluation-area h3 {
+            margin-top: 0;
+            color: #007bff;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+            flex-shrink: 0; /* Prevent title from shrinking */
+        }
+        
+        .doctor-profile-content {
+             white-space: pre-wrap; 
+             font-size: 0.95em;
+             color: #555;
+             /* Removed max-height, relies on parent (.doctor-profile-area) overflow */
+        }
+
+        .realtime-evaluation-content {
+             white-space: pre-wrap; 
+             font-size: 0.95em;
+             color: #555;
+             flex-grow: 1; /* Allow content to fill the evaluation area */
+             overflow-y: auto; /* Enable scrolling for a lot of text */
+             /* Removed fixed max-height */
+             line-height: 1.3; /* Base line-height for better control */
+        }
+
+        /* Adjusted styles for compact Markdown output */
+        .realtime-evaluation-content p,
+        .realtime-evaluation-content ul,
+        .realtime-evaluation-content ol,
+        .realtime-evaluation-content h1,
+        .realtime-evaluation-content h2,
+        .realtime-evaluation-content h3,
+        .realtime-evaluation-content h4,
+        .realtime-evaluation-content h5,
+        .realtime-evaluation-content h6,
+        .realtime-evaluation-content blockquote,
+        .realtime-evaluation-content pre {
+            margin-top: 0.2em;
+            margin-bottom: 0.2em;
+        }
+
+        .realtime-evaluation-content li {
+            margin-top: 0.1em; /* Further reduce list item margins */
+            margin-bottom: 0.1em;
+        }
+
+        .realtime-evaluation-content ul,
+        .realtime-evaluation-content ol {
+            padding-left: 20px; /* Maintain standard list indentation */
+        }
+        /* End of adjusted styles */
+
+        /* Styles from previous version, adapted for left-column */
+        header {
+            background-color: #007bff;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 1.8em;
+        }
+
+        .config-area {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .config-area label {
+            font-weight: 500;
+            margin-right: 5px;
+        }
+
+        .config-area input[type="text"], .config-area select {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            flex-grow: 1;
+            min-width: 100px; /* Adjusted min-width */
+        }
+
+        .chat-window {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+            min-height: 250px; 
+            border-bottom: 1px solid #eee;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 18px;
+            line-height: 1.5;
+            max-width: 90%; /* Adjusted for potentially narrower chat */
+            word-wrap: break-word;
+        }
+
+        .message.user {
+            background-color: #007bff;
+            color: white;
+            align-self: flex-end;
+            margin-left: auto;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.doctor {
+            background-color: #e9ecef;
+            color: #333;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+        
+        .message.doctor .sender-name {
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 3px;
+            font-size: 0.9em;
+        }
+
+        .message.coach {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+            align-self: flex-start;
+            font-size: 0.95em;
+            margin-top: 5px;
+        }
+
+        .message.system {
+            background-color: #f0f0f0;
+            color: #555;
+            font-style: italic;
+            text-align: center;
+            font-size: 0.9em;
+            align-self: center;
+            width: 100%;
+            max-width: 100%;
+            padding: 8px;
+        }
+        
+        .message-content {
+            white-space: pre-wrap;
+        }
+
+        .input-area {
+            display: flex;
+            padding: 20px;
+            gap: 10px;
+        }
+
+        .input-area textarea {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: none;
+            font-size: 1em;
+            min-height: 40px;
+        }
+
+        .input-area button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background-color 0.2s ease;
+        }
+
+        .input-area button:hover {
+            background-color: #0056b3;
+        }
+        
+        .input-area button#end-training-btn {
+            background-color: #dc3545;
+        }
+        .input-area button#end-training-btn:hover {
+            background-color: #c82333;
+        }
+
+        .summary-report {
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #eee;
+            white-space: pre-wrap;
+        }
+        .summary-report h3 {
+            margin-top: 0;
+            color: #007bff;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3; 
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            display: none;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+    </style>
+</head>
+<body>
+    <div class="main-flex-container">
+        <div class="left-column">
+            <header>
+                <h1>MedCoach</h1>
+            </header>
+    
+            <div class="config-area">
+                <label for="drug-name">药品:</label>
+                <input type="text" id="drug-name" value="Semaglutide">
+                <label for="department">科室:</label>
+                <input type="text" id="department" value="Endocrinology">
+                <label for="difficulty">难度:</label>
+                <select id="difficulty">
+                    <option value="Basic" selected>Basic</option>
+                    <option value="Intermediate">Intermediate</option>
+                    <option value="Advanced">Advanced</option>
+                </select>
+                <button id="start-btn">Start</button>
+                <div id="loading-spinner" class="spinner"></div>
+            </div>
+    
+            <div class="chat-window" id="chat-window">
+                 <div class="message system"><div class="message-content">欢迎来到 PharmaRep Coach！请选择药品、科室与难度后点击【Start】。</div></div>
+            </div>
+    
+            <div class="summary-report" id="summary-report" style="display:none;">
+                <h3>训练总结报告</h3>
+                <div id="summary-content"></div>
+            </div>
+    
+            <div class="input-area">
+                <textarea id="user-input" placeholder="请输入您的回复..." rows="2"></textarea>
+                <button id="send-btn">发送</button>
+                <button id="end-training-btn">结束训练</button>
+            </div>
+        </div>
+
+        <div class="right-column">
+            <div class="doctor-profile-area">
+                <h3>医生档案</h3>
+                <div class="doctor-profile-content" id="doctor-profile-content">
+                    请先开始训练以加载医生档案。
+                </div>
+            </div>
+            <div class="realtime-evaluation-area">
+                <h3>实时评估</h3>
+                <div class="realtime-evaluation-content" id="realtime-evaluation-content">
+                    等待用户回复后进行评估...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Ensure marked is available or handle potential loading error
+        if (typeof marked === 'undefined') {
+            console.warn('Marked.js library was not loaded. Markdown rendering will be disabled.');
+            // Provide a dummy marked.parse function if it's not available to prevent errors
+            window.marked = { parse: function(text) { return text; } }; 
+        }
+
+        const chatWindow = document.getElementById('chat-window');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const startBtn = document.getElementById('start-btn');
+        const endTrainingBtn = document.getElementById('end-training-btn');
+        const drugNameInput = document.getElementById('drug-name');
+        const departmentInput = document.getElementById('department');
+        const difficultySelect = document.getElementById('difficulty');
+        
+        const summaryReportDiv = document.getElementById('summary-report');
+        const summaryContentDiv = document.getElementById('summary-content');
+        const loadingSpinner = document.getElementById('loading-spinner');
+
+        const doctorProfileContent = document.getElementById('doctor-profile-content');
+        const realtimeEvaluationContent = document.getElementById('realtime-evaluation-content');
+
+        let conversationActive = false;
+        let currentDoctorName = "医生"; // Default doctor name
+
+        function showLoading(show) {
+            loadingSpinner.style.display = show ? 'inline-block' : 'none';
+        }
+
+        function addMessage(sender, text, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', type);
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.classList.add('message-content');
+            contentDiv.textContent = text;
+
+            if (type === 'doctor') {
+                const senderNameDiv = document.createElement('div');
+                senderNameDiv.classList.add('sender-name');
+                senderNameDiv.textContent = sender; // sender here is the cleaned doctor name
+                messageDiv.appendChild(senderNameDiv);
+            }
+            
+            messageDiv.appendChild(contentDiv);
+            chatWindow.appendChild(messageDiv);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        async function sendMessageToBackend(message) {
+            showLoading(true);
+            try {
+                const response = await fetch('http://127.0.0.1:5000/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: message })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: "请求后端失败，无法解析错误信息。" }));
+                    throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json(); 
+                
+                if (data.responses && Array.isArray(data.responses)) {
+                    data.responses.forEach(res => {
+                        if (res.startsWith("Doctor")) {
+                            const parts = res.split('▶', 2);
+                            currentDoctorName = parts[0].replace(/^Doctor\s*/, "").trim() || "医生";
+                            let messageText = parts.length > 1 ? parts[1].trim() : '';
+
+                            messageText = messageText.replace(/ _ObjectionTool_$/, "").trim();
+                            messageText = messageText.replace(/ _EvalTool_$/, "").trim();
+                            
+                            if (messageText.startsWith("Response: ")) {
+                                messageText = messageText.substring("Response: ".length).trim();
+                            }
+                            if (currentDoctorName && messageText.startsWith(currentDoctorName + ": ")) {
+                                messageText = messageText.substring((currentDoctorName + ": ".length)).trim();
+                            }
+                             if (messageText === currentDoctorName + ":") {
+                                messageText = "";
+                            }
+                            addMessage(currentDoctorName, messageText, 'doctor');
+                        
+                        } else if (res.startsWith("Coach")) {
+                            const coachMessage = res.replace(/^Coach\s*▶\s*/, '').trim();
+                            // addMessage("Coach", coachMessage, 'coach'); // Do not add to chat window
+                            // Render Markdown in the realtime evaluation panel
+                            if (window.marked) {
+                                realtimeEvaluationContent.innerHTML = marked.parse(coachMessage);
+                            } else {
+                                realtimeEvaluationContent.textContent = coachMessage; // Fallback if marked.js is not loaded
+                            }
+                        
+                        } else if (res.startsWith("Summary")) {
+                            const summaryText = res.replace(/^Summary\s*▶\s*/, '').trim();
+                            // Render Markdown for summary report
+                            if (window.marked) {
+                                summaryContentDiv.innerHTML = marked.parse(summaryText);
+                            } else {
+                                summaryContentDiv.textContent = summaryText; // Fallback
+                            }
+                            summaryReportDiv.style.display = 'block';
+                            realtimeEvaluationContent.textContent = "训练已结束。查看下方总结报告。";
+                            doctorProfileContent.textContent = "请先开始新的训练以加载医生档案。";
+                            conversationActive = false;
+                        
+                        } else if (res.startsWith("System     ▶ 【医生档案】")) {
+                            const profileInfo = res.replace(/^System\s*▶\s*【医生档案】\s*/, '').trim();
+                            doctorProfileContent.textContent = profileInfo;
+                            // Optionally add a system message to chat window too if desired
+                            // addMessage("System", `医生档案已加载: ${profileInfo}`, 'system'); 
+                        
+                        } else if (res.startsWith("System: ") || res.startsWith("System     ▶")) {
+                             addMessage("System", res.replace(/^System(:|\s*▶)\s*/, ''), 'system');
+                        
+                        } else {
+                             addMessage("System", res, 'system');
+                        }
+                    });
+                } else {
+                    addMessage("System", "后端返回了无效的数据格式。", 'system');
+                }
+
+            } catch (error) {
+                console.error('Error sending message:', error);
+                addMessage("System", `错误: ${error.message}`, 'system');
+                realtimeEvaluationContent.textContent = `错误: ${error.message}`;
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        startBtn.addEventListener('click', () => {
+            const drug = drugNameInput.value.trim();
+            const department = departmentInput.value.trim();
+            const difficulty = difficultySelect.value;
+
+            if (!drug || !department) {
+                addMessage("System", "请输入药品和科室信息。", 'system');
+                return;
+            }
+            chatWindow.innerHTML = ''; // Clear chat window
+            summaryReportDiv.style.display = 'none';
+            summaryContentDiv.textContent = '';
+            doctorProfileContent.textContent = '正在加载医生档案...';
+            realtimeEvaluationContent.textContent = '等待用户回复后进行评估...';
+
+            const startMessage = `药品: ${drug}；科室: ${department}；难度: ${difficulty}。点击【Start】`;
+            addMessage("User", startMessage, 'user');
+            sendMessageToBackend(startMessage);
+            conversationActive = true;
+        });
+
+        sendBtn.addEventListener('click', () => {
+            const messageText = userInput.value.trim();
+            if (messageText && conversationActive) {
+                addMessage("User", messageText, 'user');
+                realtimeEvaluationContent.textContent = '教练正在评估您的回答...'; // Indicate coach is thinking
+                sendMessageToBackend(messageText);
+                userInput.value = '';
+                userInput.style.height = 'auto';
+                userInput.style.height = userInput.scrollHeight + 'px';
+            } else if (!conversationActive) {
+                addMessage("System", "请先点击 Start 开始新的训练。", 'system');
+            }
+        });
+
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendBtn.click();
+            }
+        });
+        
+        userInput.addEventListener('input', () => {
+            userInput.style.height = 'auto';
+            userInput.style.height = userInput.scrollHeight + 'px';
+        });
+
+        endTrainingBtn.addEventListener('click', () => {
+            if (conversationActive) {
+                const endMessage = "点击【结束训练】";
+                addMessage("User", endMessage, 'user');
+                sendMessageToBackend(endMessage);
+            } else {
+                addMessage("System", "当前没有正在进行的训练。", 'system');
+            }
+        });
+
+    </script>
+</body>
+</html> 
