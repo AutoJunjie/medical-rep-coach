@@ -26,7 +26,7 @@ Med Coach 是一款交互式培训工具，旨在帮助医药代表提升与医�
 
 1.  **克隆或下载仓库** (如果您是通过git管理项目)
     ```bash
-    # git clone <repository-url>
+    # git clone https://github.com/AutoJunjie/medical-rep-coach.git
     # cd medical-rep-coach
     ```
 
@@ -81,4 +81,4 @@ Med Coach 是一款交互式培训工具，旨在帮助医药代表提升与医�
 *   确保后端服务 (`main.py`) 在您使用 `index.html` 时保持运行状态。
 *   实时评估和医生回复由后端AI模型生成，可能需要几秒钟的时间。
 
-希望这份指南能帮助您快速开始使用 PharmaRep Coach！ 
+希望这份指南能帮助您快速开始使用 Med Coach！ 
