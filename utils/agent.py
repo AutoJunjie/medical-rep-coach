@@ -1,22 +1,44 @@
 import os # Import os to access environment variables
+from dotenv import load_dotenv # 新增: 导入 load_dotenv
 from strands import Agent
+from strands.models.openai import OpenAIModel # 新增: 导入 OpenAIModel
 from .tools import scenario_tool, objection_tool, eval_tool
 from strands_tools import use_llm
 
+load_dotenv() # 新增: 在脚本早期加载 .env 文件
 
 class PharmaRepCoachAgent:
     def __init__(self):
         bedrock_model_id = os.getenv("BEDROCK_MODEL_ID")
+        openai_api_key = os.getenv("OPENAI_API_KEY") # 新增: 获取 OpenAI API Key
+        openai_base_url = os.getenv("OPENAI_BASE_URL") # 新增: 获取 OpenAI Base URL
         
         agent_kwargs = {
             "tools": [scenario_tool, objection_tool, eval_tool, use_llm],
             "system_prompt": "你是一个医药代表培训协调员。你的任务是根据用户输入协调场景生成、医生互动和培训评估。"
         }
         
-        if bedrock_model_id:
+        # 修改: 优先使用 OpenAI，然后 Bedrock，最后默认
+        if openai_api_key and openai_base_url:
+            agent_kwargs["model"] = OpenAIModel(
+                client_args={
+                    "api_key": openai_api_key,
+                    "base_url": openai_base_url,
+                },
+                model_id=os.getenv("OPENAI_MODEL_ID", "deepseek-ai/DeepSeek-R1"), # 允许通过环境变量配置模型ID，默认为 Qwen/Qwen3-32B
+                params={
+                    "max_tokens": int(os.getenv("OPENAI_MAX_TOKENS", 1500)), # 确保是整数
+                    "temperature": float(os.getenv("OPENAI_TEMPERATURE", 0.7)),
+                }
+            )
+            print("INFO: Using OpenAI model.")
+        elif bedrock_model_id:
             agent_kwargs["model"] = bedrock_model_id
             # model_provider defaults to "bedrock" if not set, which is desired.
             # AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY are picked up by AWS SDK from env.
+            print(f"INFO: Using Bedrock model: {bedrock_model_id}.")
+        else:
+            print("INFO: Using default Strands Agent model.")
 
         self.strands_agent = Agent(**agent_kwargs)
         self.current_mode = "waiting_for_start"  # waiting_for_start, doctor_interaction, final_summary
