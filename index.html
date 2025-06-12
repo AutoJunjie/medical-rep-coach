@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PharmaRep Coach</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <style>
         html, body {
             height: 100%; /* Ensure html and body take full viewport height */
@@ -262,6 +263,45 @@
         .input-area button#end-training-btn:hover {
             background-color: #c82333;
         }
+        
+        /* Voice input button styles */
+        .voice-btn {
+            padding: 10px;
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            transition: all 0.3s ease;
+        }
+
+        .voice-btn i {
+            margin-right: 5px;
+        }
+
+        .voice-btn:hover {
+            background-color: #e0e0e0;
+        }
+
+        .voice-btn.recording {
+            background-color: #ff6b6b;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+
+        .recording-indicator {
+            margin-left: 10px;
+            color: #ff6b6b;
+            font-weight: bold;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
 
         .summary-report {
             padding: 20px;
@@ -325,8 +365,10 @@
     
             <div class="input-area">
                 <textarea id="user-input" placeholder="请输入您的回复..." rows="2"></textarea>
+                <button id="voice-input-button" class="voice-btn"><i class="fas fa-microphone"></i></button>
                 <button id="send-btn">发送</button>
                 <button id="end-training-btn">结束训练</button>
+                <span id="recording-indicator" class="recording-indicator" style="display:none;">录音中...</span>
             </div>
         </div>
 
@@ -359,6 +401,8 @@
         const sendBtn = document.getElementById('send-btn');
         const startBtn = document.getElementById('start-btn');
         const endTrainingBtn = document.getElementById('end-training-btn');
+        const voiceInputBtn = document.getElementById('voice-input-button');
+        const recordingIndicator = document.getElementById('recording-indicator');
         const drugNameInput = document.getElementById('drug-name');
         const departmentInput = document.getElementById('department');
         const difficultySelect = document.getElementById('difficulty');
@@ -372,6 +416,11 @@
 
         let conversationActive = false;
         let currentDoctorName = "医生"; // Default doctor name
+        
+        // Voice recording variables
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
 
         function showLoading(show) {
             loadingSpinner.style.display = show ? 'inline-block' : 'none';
@@ -400,7 +449,7 @@
         async function sendMessageToBackend(message) {
             showLoading(true);
             try {
-                const response = await fetch('http://127.0.0.1:5000/chat', {
+                const response = await fetch('http://127.0.0.1:8080/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -541,6 +590,84 @@
                 addMessage("System", "当前没有正在进行的训练。", 'system');
             }
         });
+
+        // Voice input functionality
+        async function toggleRecording() {
+            if (isRecording) {
+                // Stop recording
+                mediaRecorder.stop();
+                voiceInputBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                voiceInputBtn.classList.remove('recording');
+                recordingIndicator.style.display = 'none';
+                isRecording = false;
+            } else {
+                // Start recording
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    audioChunks = [];
+                    
+                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    mediaRecorder.ondataavailable = (event) => {
+                        audioChunks.push(event.data);
+                    };
+                    
+                    mediaRecorder.onstop = async () => {
+                        // Process recording data
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        
+                        // Show processing status
+                        const originalValue = userInput.value;
+                        userInput.value = "正在转录语音...";
+                        userInput.disabled = true;
+                        
+                        try {
+                            // Send to backend for transcription
+                            const formData = new FormData();
+                            formData.append('audio', audioBlob);
+                            
+                            const response = await fetch('http://127.0.0.1:8080/transcribe', {
+                                method: 'POST',
+                                body: formData
+                            });
+                            
+                            if (!response.ok) {
+                                throw new Error('语音转录失败');
+                            }
+                            
+                            const data = await response.json();
+                            
+                            // Fill transcribed text into input box
+                            userInput.value = data.text;
+                            userInput.disabled = false;
+                            userInput.focus();
+                            
+                        } catch (error) {
+                            console.error('转录错误:', error);
+                            userInput.value = originalValue;
+                            userInput.disabled = false;
+                            alert('语音转录失败: ' + error.message);
+                        }
+                        
+                        // Close all audio tracks
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+                    
+                    mediaRecorder.start();
+                    voiceInputBtn.innerHTML = '<i class="fas fa-stop"></i>';
+                    voiceInputBtn.classList.add('recording');
+                    recordingIndicator.style.display = 'inline';
+                    isRecording = true;
+                    
+                } catch (error) {
+                    console.error('无法访问麦克风:', error);
+                    alert('无法访问麦克风: ' + error.message);
+                }
+            }
+        }
+
+        // Add voice button click event
+        voiceInputBtn.addEventListener('click', toggleRecording);
 
     </script>
 </body>
