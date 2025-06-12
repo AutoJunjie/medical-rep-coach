@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MedCoach</title>
+    <!-- External libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <!-- CSS files -->
+    <link rel="stylesheet" href="../static/css/main.css">
+    <link rel="stylesheet" href="../static/css/chat.css">
+    <link rel="stylesheet" href="../static/css/evaluation.css">
+</head>
+<body>
+    <div class="main-flex-container">
+        <div class="left-column">
+            <header>
+                <h1>MedCoach</h1>
+            </header>
+    
+            <div class="config-area">
+                <label for="drug-name">药品:</label>
+                <input type="text" id="drug-name" value="Semaglutide">
+                <label for="department">科室:</label>
+                <input type="text" id="department" value="Endocrinology">
+                <label for="difficulty">难度:</label>
+                <select id="difficulty">
+                    <option value="Basic" selected>Basic</option>
+                    <option value="Intermediate">Intermediate</option>
+                    <option value="Advanced">Advanced</option>
+                </select>
+                <button id="start-btn">Start</button>
+                <div id="loading-spinner" class="spinner"></div>
+            </div>
+    
+            <div class="chat-window" id="chat-window">
+                 <div class="message system"><div class="message-content">欢迎来到 MedCoach！请选择药品、科室与难度后点击【Start】。</div></div>
+            </div>
+    
+            <div class="summary-report" id="summary-report" style="display:none;">
+                <h3>训练总结报告</h3>
+                <div id="summary-content"></div>
+            </div>
+    
+            <div class="input-area">
+                <textarea id="user-input" placeholder="请输入您的回复..." rows="2"></textarea>
+                <button id="voice-input-button" class="voice-btn"><i class="fas fa-microphone"></i></button>
+                <button id="send-btn">发送</button>
+                <button id="end-training-btn">结束训练</button>
+                <span id="recording-indicator" class="recording-indicator" style="display:none;">录音中...</span>
+            </div>
+        </div>
+
+        <div class="right-column">
+            <div class="doctor-profile-area">
+                <h3>医生档案</h3>
+                <div class="doctor-profile-content" id="doctor-profile-content">
+                    请先开始训练以加载医生档案。
+                </div>
+            </div>
+            <div class="realtime-evaluation-area">
+                <h3>实时评估</h3>
+                <div class="realtime-evaluation-content" id="realtime-evaluation-content">
+                    等待用户回复后进行评估...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript modules -->
+    <script type="module" src="../static/js/app.js"></script>
+</body>
+</html>
