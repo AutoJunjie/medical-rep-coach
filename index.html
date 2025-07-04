@@ -299,9 +299,23 @@
                 
             } catch (error) {
                 console.error('流式转录初始化失败:', error);
-                // 如果WebSocket失败，回退到标准API
-                useStreamingTranscription = false;
-                await startStandardRecording();
+                
+                // 重置录音状态
+                isRecording = false;
+                voiceInputBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                voiceInputBtn.classList.remove('recording');
+                recordingIndicator.style.display = 'none';
+                
+                // 根据错误类型处理
+                if (error.name === 'NotAllowedError') {
+                    userInput.value = '';
+                    userInput.disabled = false;
+                    throw error; // 重新抛出让上层处理
+                } else {
+                    // 如果WebSocket失败，回退到标准API
+                    useStreamingTranscription = false;
+                    await startStandardRecording();
+                }
             }
         }
 
@@ -508,7 +522,7 @@
             }
         }
 
-        startBtn.addEventListener('click', () => {
+        startBtn.addEventListener('click', async () => {
             const drug = drugNameInput.value.trim();
             const department = departmentInput.value.trim();
             const difficulty = difficultySelect.value;
@@ -517,12 +531,29 @@
                 addMessage("System", "请输入药品和科室信息。", 'system');
                 return;
             }
+            
+            // 清理前端状态
             chatWindow.innerHTML = ''; // Clear chat window
             summaryReportDiv.style.display = 'none';
             summaryContentDiv.textContent = '';
             doctorProfileContent.textContent = '正在加载医生档案...';
             realtimeEvaluationContent.textContent = '等待用户回复后进行评估...';
+            conversationActive = false; // 重置会话状态
 
+            try {
+                // 首先发送重置信号给后端
+                await fetch('http://127.0.0.1:18080/reset', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                console.log('后端状态已重置');
+            } catch (error) {
+                console.warn('重置后端状态失败，继续启动训练:', error);
+            }
+
+            // 然后发送开始训练消息
             const startMessage = `药品: ${drug}；科室: ${department}；难度: ${difficulty}。点击【Start】`;
             addMessage("User", startMessage, 'user');
             sendMessageToBackend(startMessage);
@@ -580,16 +611,36 @@
                 recordingIndicator.style.display = 'none';
                 isRecording = false;
             } else {
-                // Start recording
-                isRecording = true;
-                voiceInputBtn.innerHTML = '<i class="fas fa-stop"></i>';
-                voiceInputBtn.classList.add('recording');
-                recordingIndicator.style.display = 'inline';
-                
-                if (useStreamingTranscription) {
-                    await startStreamingRecording();
-                } else {
-                    await startStandardRecording();
+                // Start recording - 添加权限检查
+                try {
+                    // 先检查麦克风权限
+                    const permissionStatus = await navigator.permissions.query({name: 'microphone'});
+                    
+                    // 设置录音状态
+                    isRecording = true;
+                    voiceInputBtn.innerHTML = '<i class="fas fa-stop"></i>';
+                    voiceInputBtn.classList.add('recording');
+                    recordingIndicator.style.display = 'inline';
+                    
+                    if (useStreamingTranscription) {
+                        await startStreamingRecording();
+                    } else {
+                        await startStandardRecording();
+                    }
+                } catch (error) {
+                    console.error('录音启动失败:', error);
+                    // 重置UI状态
+                    isRecording = false;
+                    voiceInputBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                    voiceInputBtn.classList.remove('recording');
+                    recordingIndicator.style.display = 'none';
+                    
+                    // 显示友好的错误提示
+                    if (error.name === 'NotAllowedError') {
+                        alert('需要麦克风权限才能使用语音输入功能。请在浏览器设置中允许麦克风访问。');
+                    } else {
+                        alert('无法启动录音: ' + error.message);
+                    }
                 }
             }
         }

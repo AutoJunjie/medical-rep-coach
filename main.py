@@ -305,6 +305,18 @@ def transcribe_audio():
         
         return jsonify({"error": str(e)}), 500
 
+@app.route('/reset', methods=['POST'])
+def reset_session():
+    """重置会话状态"""
+    try:
+        global coach_agent
+        # 重新初始化coach_agent来清除会话状态
+        coach_agent = PharmaRepCoachAgent()
+        return jsonify({"status": "success", "message": "会话状态已重置"}), 200
+    except Exception as e:
+        print(f"重置会话状态时出错: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/websocket-port', methods=['GET'])
 def get_websocket_port():
     """返回WebSocket服务器的端口"""
