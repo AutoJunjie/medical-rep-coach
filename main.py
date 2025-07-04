@@ -9,6 +9,14 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS # 方便本地开发时处理跨域问题
 from utils.agent import PharmaRepCoachAgent # 假设您的 agent 在 medical_agent.py
 from werkzeug.utils import secure_filename
+import asyncio
+import websockets
+import json
+import base64
+import threading
+from amazon_transcribe.client import TranscribeStreamingClient
+from amazon_transcribe.handlers import TranscriptResultStreamHandler
+from amazon_transcribe.model import TranscriptEvent
 
 # 确保有上传文件的目录
 UPLOAD_FOLDER = 'temp_audio'
@@ -39,6 +47,154 @@ def get_s3_client():
         aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
         aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
     )
+
+# WebSocket处理函数
+async def transcribe_stream(websocket):
+    """处理WebSocket连接的异步函数"""
+    print(f"New WebSocket connection: {websocket.remote_address}")
+    
+    # 创建流式转录客户端
+    client = None
+    stream = None
+    transcript_task = None
+    
+    try:
+        # 处理来自客户端的消息
+        async for message in websocket:
+            data = json.loads(message)
+            
+            if data['type'] == 'start':
+                # 开始新的转录会话
+                print("Starting new transcription session")
+                
+                # 创建Transcribe流式客户端
+                client = TranscribeStreamingClient(region=os.getenv('AWS_REGION', 'us-east-1'))
+                
+                # 配置流式转录
+                stream = await client.start_stream_transcription(
+                    language_code="zh-CN",
+                    media_encoding="pcm",
+                    media_sample_rate_hz=16000
+                )
+                
+                # 启动转录结果处理任务
+                transcript_task = asyncio.create_task(
+                    handle_transcript_results(stream.output_stream, websocket)
+                )
+                
+                # 通知客户端转录已开始
+                await websocket.send(json.dumps({
+                    "type": "info",
+                    "message": "转录会话已开始"
+                }))
+            
+            elif data['type'] == 'audio':
+                # 确保流已经初始化
+                if not stream:
+                    await websocket.send(json.dumps({
+                        "type": "error",
+                        "message": "转录会话尚未开始"
+                    }))
+                    continue
+                
+                # 解码base64音频数据
+                audio_data = base64.b64decode(data['data'])
+                
+                # 发送音频数据到流
+                await stream.input_stream.send_audio_event(audio_data)
+            
+            elif data['type'] == 'end':
+                # 结束转录流
+                if stream:
+                    await stream.input_stream.end_stream()
+                
+                # 等待转录任务完成
+                if transcript_task:
+                    try:
+                        await asyncio.wait_for(transcript_task, timeout=5.0)
+                    except asyncio.TimeoutError:
+                        transcript_task.cancel()
+                
+                # 重置状态，准备下一次转录
+                client = None
+                stream = None
+                transcript_task = None
+                
+                await websocket.send(json.dumps({
+                    "type": "info",
+                    "message": "转录会话已结束"
+                }))
+    
+    except Exception as e:
+        print(f"WebSocket error: {str(e)}")
+        try:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": str(e)
+            }))
+        except:
+            pass
+    finally:
+        # 确保流被关闭
+        if stream:
+            try:
+                await stream.input_stream.end_stream()
+            except:
+                pass
+        
+        # 取消转录任务
+        if transcript_task and not transcript_task.done():
+            transcript_task.cancel()
+        
+        print(f"WebSocket connection closed: {websocket.remote_address}")
+
+async def handle_transcript_results(output_stream, websocket):
+    """处理转录结果流"""
+    full_transcript = ""
+    
+    try:
+        async for event in output_stream:
+            if hasattr(event, 'transcript') and event.transcript:
+                results = event.transcript.results
+                
+                for result in results:
+                    if result.alternatives:
+                        transcript = result.alternatives[0].transcript
+                        
+                        if result.is_partial:
+                            # 发送部分结果
+                            await websocket.send(json.dumps({
+                                "type": "partial",
+                                "transcript": transcript
+                            }))
+                        else:
+                            # 发送最终结果
+                            full_transcript += transcript + " "
+                            await websocket.send(json.dumps({
+                                "type": "final",
+                                "transcript": transcript
+                            }))
+    
+    except Exception as e:
+        print(f"Error handling transcript results: {e}")
+        try:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"转录处理错误: {str(e)}"
+            }))
+        except:
+            pass
+    
+    finally:
+        # 发送完整转录结果
+        if full_transcript.strip():
+            try:
+                await websocket.send(json.dumps({
+                    "type": "complete",
+                    "transcript": full_transcript.strip()
+                }))
+            except:
+                pass
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -149,5 +305,40 @@ def transcribe_audio():
         
         return jsonify({"error": str(e)}), 500
 
+@app.route('/websocket-port', methods=['GET'])
+def get_websocket_port():
+    """返回WebSocket服务器的端口"""
+    return jsonify({"port": 18765})
+
 if __name__ == '__main__':
-    app.run(debug=True, port=8080) # Flask 默认运行在 8080 端口
+    # 启动WebSocket服务器
+    async def start_websocket_server():
+        # 使用固定端口
+        port = 18765
+        
+        print(f"尝试在端口 {port} 上启动WebSocket服务器")
+        
+        try:
+            async with websockets.serve(
+                transcribe_stream,
+                "localhost", 
+                port
+            ):
+                print(f"WebSocket server started on ws://localhost:{port}")
+                await asyncio.Future()  # 运行直到被取消
+        except OSError as e:
+            print(f"启动WebSocket服务器失败: {e}")
+    
+    # 在单独的线程中启动WebSocket服务器
+    def run_websocket_server():
+        try:
+            asyncio.run(start_websocket_server())
+        except Exception as e:
+            print(f"WebSocket服务器线程错误: {e}")
+    
+    websocket_thread = threading.Thread(target=run_websocket_server)
+    websocket_thread.daemon = True
+    websocket_thread.start()
+    
+    # 启动Flask应用
+    app.run(debug=True, port=18080, use_reloader=False)  # 禁用重新加载器，避免启动多个WebSocket服务器

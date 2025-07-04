@@ -421,6 +421,329 @@
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
+        
+        // Streaming transcription variables
+        let transcribeWebSocket = null;
+        let audioContext = null;
+        let audioProcessor = null;
+        let audioStream = null;
+        let useStreamingTranscription = true; // 默认使用流式转录
+
+        // WebSocket utilities
+        async function initTranscribeWebSocket() {
+            if (transcribeWebSocket && transcribeWebSocket.readyState === WebSocket.OPEN) {
+                return transcribeWebSocket;
+            }
+            
+            if (transcribeWebSocket) {
+                transcribeWebSocket.close();
+            }
+            
+            return new Promise((resolve, reject) => {
+                console.log('连接转录WebSocket: ws://localhost:18765');
+                transcribeWebSocket = new WebSocket('ws://localhost:18765');
+                
+                transcribeWebSocket.onopen = () => {
+                    console.log('转录WebSocket连接已建立');
+                    resolve(transcribeWebSocket);
+                };
+                
+                transcribeWebSocket.onerror = (error) => {
+                    console.error('转录WebSocket错误:', error);
+                    reject(error);
+                };
+                
+                transcribeWebSocket.onclose = () => {
+                    console.log('转录WebSocket连接已关闭');
+                    transcribeWebSocket = null;
+                };
+            });
+        }
+
+        function closeTranscribeWebSocket() {
+            if (transcribeWebSocket) {
+                transcribeWebSocket.close();
+                transcribeWebSocket = null;
+            }
+        }
+
+        // Convert ArrayBuffer to Base64
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        // Streaming transcription functions
+        async function startStreamingRecording() {
+            try {
+                // 初始化WebSocket连接
+                const websocket = await initTranscribeWebSocket();
+                
+                // 转录状态管理
+                let confirmedText = ''; // 已确认的文本
+                let lastPartialText = ''; // 上一次的部分文本
+                let isTranscribing = false;
+                
+                // 设置WebSocket消息处理
+                websocket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('收到转录消息:', data.type, data.transcript || data.message);
+                        
+                        if (data.type === 'partial') {
+                            // 显示部分转录结果：确认文本 + 当前部分文本 + 提示符
+                            lastPartialText = data.transcript || '';
+                            const displayText = confirmedText + lastPartialText;
+                            userInput.value = displayText + (displayText ? '...' : '正在识别...');
+                            
+                        } else if (data.type === 'final') {
+                            // 最终结果：将final文本添加到确认文本中
+                            const finalText = data.transcript || '';
+                            if (finalText.trim()) {
+                                confirmedText += finalText;
+                                // 如果不是以空格或标点结尾，添加空格
+                                if (!confirmedText.endsWith(' ') && !confirmedText.match(/[。！？，、；：]$/)) {
+                                    confirmedText += ' ';
+                                }
+                            }
+                            
+                            // 清除部分文本，显示确认文本
+                            lastPartialText = '';
+                            userInput.value = confirmedText.trim();
+                            
+                        } else if (data.type === 'complete') {
+                            // 转录完成：显示最终完整结果
+                            let finalResult = '';
+                            
+                            if (data.transcript && data.transcript.trim()) {
+                                finalResult = data.transcript.trim();
+                            } else if (confirmedText.trim()) {
+                                finalResult = confirmedText.trim();
+                            }
+                            
+                            userInput.value = finalResult;
+                            userInput.disabled = false;
+                            userInput.focus();
+                            
+                            // 重置所有状态
+                            confirmedText = '';
+                            lastPartialText = '';
+                            isTranscribing = false;
+                            
+                            console.log('转录完成，最终结果:', finalResult);
+                            
+                        } else if (data.type === 'error') {
+                            console.error('转录错误:', data.message);
+                            userInput.value = '转录失败，请重试';
+                            userInput.disabled = false;
+                            
+                            // 重置状态
+                            confirmedText = '';
+                            lastPartialText = '';
+                            isTranscribing = false;
+                            
+                        } else if (data.type === 'info') {
+                            console.log('转录信息:', data.message);
+                            if (data.message && data.message.includes('开始')) {
+                                isTranscribing = true;
+                                confirmedText = '';
+                                lastPartialText = '';
+                                userInput.value = '🎤 开始识别语音...';
+                            }
+                        }
+                    } catch (error) {
+                        console.error('处理WebSocket消息时出错:', error);
+                    }
+                };
+                
+                // 获取音频流（添加更多音频优化）
+                audioStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        // 添加延迟优化
+                        latency: 0.01
+                    }
+                });
+                
+                // 创建音频处理器
+                audioContext = new AudioContext({
+                    sampleRate: 16000,
+                    latencyHint: 'interactive' // 优化延迟
+                });
+                const source = audioContext.createMediaStreamSource(audioStream);
+                audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                source.connect(audioProcessor);
+                audioProcessor.connect(audioContext.destination);
+                
+                // 通知服务器开始转录
+                websocket.send(JSON.stringify({
+                    type: 'start'
+                }));
+                
+                // 清空输入框并设置初始状态
+                userInput.value = '🎤 正在连接转录服务...';
+                userInput.disabled = true;
+                confirmedText = '';
+                lastPartialText = '';
+                
+                // 处理音频数据
+                audioProcessor.onaudioprocess = (e) => {
+                    if (isRecording && websocket.readyState === WebSocket.OPEN) {
+                        // 获取音频数据
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        
+                        // 转换为16位整数（使用更精确的转换）
+                        const pcmData = new Int16Array(inputData.length);
+                        for (let i = 0; i < inputData.length; i++) {
+                            // 限制范围并四舍五入
+                            const sample = Math.max(-1, Math.min(1, inputData[i]));
+                            pcmData[i] = Math.round(sample * 32767);
+                        }
+                        
+                        // 发送到服务器
+                        websocket.send(JSON.stringify({
+                            type: 'audio',
+                            data: arrayBufferToBase64(pcmData.buffer)
+                        }));
+                    }
+                };
+                
+            } catch (error) {
+                console.error('流式转录初始化失败:', error);
+                // 如果WebSocket失败，回退到标准API
+                useStreamingTranscription = false;
+                await startStandardRecording();
+            }
+        }
+
+        async function startStandardRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioChunks = [];
+                
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    // Process recording data
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    
+                    // Show processing status
+                    const originalValue = userInput.value;
+                    userInput.value = "正在转录语音...";
+                    userInput.disabled = true;
+                    
+                    try {
+                        // Send to backend for transcription
+                        const formData = new FormData();
+                        formData.append('audio', audioBlob);
+                        
+                        const response = await fetch('http://127.0.0.1:18080/transcribe', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error('语音转录失败');
+                        }
+                        
+                        const data = await response.json();
+                        
+                        // Fill transcribed text into input box
+                        userInput.value = data.text;
+                        userInput.disabled = false;
+                        userInput.focus();
+                        
+                    } catch (error) {
+                        console.error('转录错误:', error);
+                        userInput.value = originalValue;
+                        userInput.disabled = false;
+                        alert('语音转录失败: ' + error.message);
+                    }
+                    
+                    // Close all audio tracks
+                    stream.getTracks().forEach(track => track.stop());
+                };
+                
+                mediaRecorder.start();
+                
+            } catch (error) {
+                console.error('无法访问麦克风:', error);
+                alert('无法访问麦克风: ' + error.message);
+            }
+        }
+
+        function stopStreamingRecording() {
+            // 停止流式录音
+            if (audioProcessor) {
+                audioProcessor.disconnect();
+                audioProcessor = null;
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+            }
+            
+            // 通知服务器录音结束
+            if (transcribeWebSocket && transcribeWebSocket.readyState === WebSocket.OPEN) {
+                transcribeWebSocket.send(JSON.stringify({
+                    type: 'end'
+                }));
+            }
+        }
+
+        function stopStandardRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        }
+
+        // Voice input functionality
+        async function toggleRecording() {
+            if (isRecording) {
+                // Stop recording
+                if (useStreamingTranscription) {
+                    stopStreamingRecording();
+                } else {
+                    stopStandardRecording();
+                }
+                
+                voiceInputBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                voiceInputBtn.classList.remove('recording');
+                recordingIndicator.style.display = 'none';
+                isRecording = false;
+            } else {
+                // Start recording
+                isRecording = true;
+                voiceInputBtn.innerHTML = '<i class="fas fa-stop"></i>';
+                voiceInputBtn.classList.add('recording');
+                recordingIndicator.style.display = 'inline';
+                
+                if (useStreamingTranscription) {
+                    await startStreamingRecording();
+                } else {
+                    await startStandardRecording();
+                }
+            }
+        }
 
         function showLoading(show) {
             loadingSpinner.style.display = show ? 'inline-block' : 'none';
@@ -449,7 +772,7 @@
         async function sendMessageToBackend(message) {
             showLoading(true);
             try {
-                const response = await fetch('http://127.0.0.1:8080/chat', {
+                const response = await fetch('http://127.0.0.1:18080/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -595,73 +918,27 @@
         async function toggleRecording() {
             if (isRecording) {
                 // Stop recording
-                mediaRecorder.stop();
+                if (useStreamingTranscription) {
+                    stopStreamingRecording();
+                } else {
+                    stopStandardRecording();
+                }
+                
                 voiceInputBtn.innerHTML = '<i class="fas fa-microphone"></i>';
                 voiceInputBtn.classList.remove('recording');
                 recordingIndicator.style.display = 'none';
                 isRecording = false;
             } else {
                 // Start recording
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    audioChunks = [];
-                    
-                    mediaRecorder = new MediaRecorder(stream);
-                    
-                    mediaRecorder.ondataavailable = (event) => {
-                        audioChunks.push(event.data);
-                    };
-                    
-                    mediaRecorder.onstop = async () => {
-                        // Process recording data
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                        
-                        // Show processing status
-                        const originalValue = userInput.value;
-                        userInput.value = "正在转录语音...";
-                        userInput.disabled = true;
-                        
-                        try {
-                            // Send to backend for transcription
-                            const formData = new FormData();
-                            formData.append('audio', audioBlob);
-                            
-                            const response = await fetch('http://127.0.0.1:8080/transcribe', {
-                                method: 'POST',
-                                body: formData
-                            });
-                            
-                            if (!response.ok) {
-                                throw new Error('语音转录失败');
-                            }
-                            
-                            const data = await response.json();
-                            
-                            // Fill transcribed text into input box
-                            userInput.value = data.text;
-                            userInput.disabled = false;
-                            userInput.focus();
-                            
-                        } catch (error) {
-                            console.error('转录错误:', error);
-                            userInput.value = originalValue;
-                            userInput.disabled = false;
-                            alert('语音转录失败: ' + error.message);
-                        }
-                        
-                        // Close all audio tracks
-                        stream.getTracks().forEach(track => track.stop());
-                    };
-                    
-                    mediaRecorder.start();
-                    voiceInputBtn.innerHTML = '<i class="fas fa-stop"></i>';
-                    voiceInputBtn.classList.add('recording');
-                    recordingIndicator.style.display = 'inline';
-                    isRecording = true;
-                    
-                } catch (error) {
-                    console.error('无法访问麦克风:', error);
-                    alert('无法访问麦克风: ' + error.message);
+                isRecording = true;
+                voiceInputBtn.innerHTML = '<i class="fas fa-stop"></i>';
+                voiceInputBtn.classList.add('recording');
+                recordingIndicator.style.display = 'inline';
+                
+                if (useStreamingTranscription) {
+                    await startStreamingRecording();
+                } else {
+                    await startStandardRecording();
                 }
             }
         }
