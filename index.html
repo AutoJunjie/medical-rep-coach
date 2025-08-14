@@ -427,6 +427,18 @@
                 senderNameDiv.classList.add('sender-name');
                 senderNameDiv.textContent = sender; // sender here is the cleaned doctor name
                 messageDiv.appendChild(senderNameDiv);
+                
+                // 添加语音播放按钮
+                const speakButton = document.createElement('button');
+                speakButton.classList.add('speak-button');
+                speakButton.innerHTML = '🔊';
+                speakButton.title = '播放语音';
+                speakButton.onclick = () => playTextToSpeech(text, speakButton);
+                
+                const buttonContainer = document.createElement('div');
+                buttonContainer.classList.add('message-actions');
+                buttonContainer.appendChild(speakButton);
+                messageDiv.appendChild(buttonContainer);
             }
             
             messageDiv.appendChild(contentDiv);
@@ -595,6 +607,107 @@
                 addMessage("System", "当前没有正在进行的训练。", 'system');
             }
         });
+
+        // Text-to-Speech functionality
+        let currentAudio = null; // 用于跟踪当前播放的音频
+        
+        async function playTextToSpeech(text, button) {
+            try {
+                // 如果有音频正在播放，先停止
+                if (currentAudio) {
+                    currentAudio.pause();
+                    currentAudio = null;
+                    // 重置所有按钮状态
+                    document.querySelectorAll('.speak-button').forEach(btn => {
+                        btn.innerHTML = '🔊';
+                        btn.disabled = false;
+                    });
+                }
+                
+                // 更新按钮状态
+                button.innerHTML = '⏳';
+                button.disabled = true;
+                
+                // 调用后端TTS API
+                const response = await fetch('http://127.0.0.1:18080/text-to-speech', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        text: text,
+                        voice_id: 'Zhiyu' // 中文女声
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`TTS请求失败: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // 创建音频对象并播放
+                const audioBlob = new Blob([
+                    Uint8Array.from(atob(data.audio_data), c => c.charCodeAt(0))
+                ], { type: data.content_type });
+                
+                const audioUrl = URL.createObjectURL(audioBlob);
+                currentAudio = new Audio(audioUrl);
+                
+                // 更新按钮为播放状态
+                button.innerHTML = '⏸️';
+                button.disabled = false;
+                
+                // 播放音频
+                await currentAudio.play();
+                
+                // 监听播放结束
+                currentAudio.onended = () => {
+                    button.innerHTML = '🔊';
+                    URL.revokeObjectURL(audioUrl);
+                    currentAudio = null;
+                };
+                
+                // 监听播放错误
+                currentAudio.onerror = (e) => {
+                    console.error('音频播放错误:', e);
+                    button.innerHTML = '❌';
+                    setTimeout(() => {
+                        button.innerHTML = '🔊';
+                        button.disabled = false;
+                    }, 2000);
+                    URL.revokeObjectURL(audioUrl);
+                    currentAudio = null;
+                };
+                
+                // 点击按钮暂停/恢复播放
+                button.onclick = () => {
+                    if (currentAudio) {
+                        if (currentAudio.paused) {
+                            currentAudio.play();
+                            button.innerHTML = '⏸️';
+                        } else {
+                            currentAudio.pause();
+                            button.innerHTML = '▶️';
+                        }
+                    } else {
+                        // 重新播放
+                        playTextToSpeech(text, button);
+                    }
+                };
+                
+            } catch (error) {
+                console.error('TTS播放失败:', error);
+                button.innerHTML = '❌';
+                button.disabled = false;
+                
+                // 2秒后恢复按钮状态
+                setTimeout(() => {
+                    button.innerHTML = '🔊';
+                    button.onclick = () => playTextToSpeech(text, button);
+                }, 2000);
+            }
+        }
 
         // Voice input functionality
         async function toggleRecording() {

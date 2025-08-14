@@ -48,6 +48,15 @@ def get_s3_client():
         aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
     )
 
+# 配置Polly客户端(用于文字转语音)
+def get_polly_client():
+    return boto3.client(
+        'polly',
+        region_name=os.getenv('AWS_REGION', 'us-east-1'),
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+    )
+
 # WebSocket处理函数
 async def transcribe_stream(websocket):
     """处理WebSocket连接的异步函数"""
@@ -221,6 +230,49 @@ def chat():
         print(f"Error in /chat endpoint: {str(e)}") # Log the error server-side
         # 返回一个包含错误信息的列表，以便前端可以显示
         return jsonify({"responses": [f"System: 服务器处理请求时发生错误: {str(e)}"]}), 500
+
+@app.route('/text-to-speech', methods=['POST'])
+def text_to_speech():
+    """将文本转换为语音"""
+    try:
+        data = request.get_json()
+        text = data.get('text')
+        voice_id = data.get('voice_id', 'Zhiyu')  # 默认使用中文女声
+        
+        if not text:
+            return jsonify({"error": "Missing text in request"}), 400
+        
+        # 限制文本长度（Polly有字符限制）
+        if len(text) > 3000:
+            text = text[:3000] + "..."
+        
+        # 获取Polly客户端
+        polly_client = get_polly_client()
+        
+        # 调用Polly进行语音合成
+        response = polly_client.synthesize_speech(
+            Text=text,
+            OutputFormat='mp3',
+            VoiceId=voice_id,
+            Engine='neural',  # 使用神经网络引擎获得更自然的语音
+            LanguageCode='cmn-CN'  # 中文普通话
+        )
+        
+        # 获取音频流
+        audio_stream = response['AudioStream']
+        audio_data = audio_stream.read()
+        
+        # 将音频数据编码为base64
+        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+        
+        return jsonify({
+            "audio_data": audio_base64,
+            "content_type": "audio/mpeg"
+        })
+        
+    except Exception as e:
+        print(f"Error in /text-to-speech endpoint: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe_audio():
