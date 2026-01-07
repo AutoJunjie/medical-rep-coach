@@ -5,291 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PharmaRep Coach</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <style>
-        html, body {
-            height: 100%; /* Ensure html and body take full viewport height */
-            margin: 0;
-            padding: 0;
-            overflow: hidden; /* Prevent scrolling on the body itself */
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #f4f7f9;
-            display: flex;
-            justify-content: center; /* Center the main-flex-container */
-            color: #333;
-            box-sizing: border-box; /* Include padding and border in element's total width and height */
-        }
-
-        .main-flex-container {
-            display: flex;
-            width: 100%;
-            max-width: 1200px; /* Adjust overall max width as needed */
-            margin: 20px; /* Provides some spacing from browser edges */
-            gap: 20px; /* Gap between left and right columns */
-            height: calc(100% - 40px); /* Full height minus top/bottom margin */
-            box-sizing: border-box;
-        }
-
-        .left-column {
-            flex: 2; /* Takes up 2/3 of the space */
-            display: flex;
-            flex-direction: column;
-            background-color: #fff;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            border-radius: 8px;
-            overflow: hidden; /* Prevent left-column itself from scrolling */
-        }
-
-        .right-column {
-            flex: 1; /* Takes up 1/3 of the space */
-            display: flex;
-            flex-direction: column;
-            gap: 20px; /* Gap between profile and evaluation area */
-            align-self: stretch; 
-            overflow: hidden; /* Prevent right-column itself from scrolling */
-        }
-
-        .doctor-profile-area {
-            background-color: #fff;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            border-radius: 8px;
-            padding: 20px;
-            flex-shrink: 0; /* Prevent shrinking, height based on content or fixed */
-            max-height: 250px; /* Optional: give profile a max height */
-            overflow-y: auto;  /* Scroll profile if its content is too tall */
-        }
-        
-        .realtime-evaluation-area {
-            background-color: #fff;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            border-radius: 8px;
-            padding: 20px;
-            flex-grow: 1; /* Allow this area to grow and fill available space */
-            display: flex; /* Enable flex for its children */
-            flex-direction: column; /* Stack title and content vertically */
-            min-height: 150px; /* Optional: ensure a minimum visible height */
-        }
-        
-        .doctor-profile-area h3, .realtime-evaluation-area h3 {
-            margin-top: 0;
-            color: #007bff;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 10px;
-            margin-bottom: 15px;
-            flex-shrink: 0; /* Prevent title from shrinking */
-        }
-        
-        .doctor-profile-content {
-             white-space: pre-wrap; 
-             font-size: 0.95em;
-             color: #555;
-             /* Removed max-height, relies on parent (.doctor-profile-area) overflow */
-        }
-
-        .realtime-evaluation-content {
-             white-space: pre-wrap; 
-             font-size: 0.95em;
-             color: #555;
-             flex-grow: 1; /* Allow content to fill the evaluation area */
-             overflow-y: auto; /* Enable scrolling for a lot of text */
-             /* Removed fixed max-height */
-             line-height: 1.3; /* Base line-height for better control */
-        }
-
-        /* Adjusted styles for compact Markdown output */
-        .realtime-evaluation-content p,
-        .realtime-evaluation-content ul,
-        .realtime-evaluation-content ol,
-        .realtime-evaluation-content h1,
-        .realtime-evaluation-content h2,
-        .realtime-evaluation-content h3,
-        .realtime-evaluation-content h4,
-        .realtime-evaluation-content h5,
-        .realtime-evaluation-content h6,
-        .realtime-evaluation-content blockquote,
-        .realtime-evaluation-content pre {
-            margin-top: 0.2em;
-            margin-bottom: 0.2em;
-        }
-
-        .realtime-evaluation-content li {
-            margin-top: 0.1em; /* Further reduce list item margins */
-            margin-bottom: 0.1em;
-        }
-
-        .realtime-evaluation-content ul,
-        .realtime-evaluation-content ol {
-            padding-left: 20px; /* Maintain standard list indentation */
-        }
-        /* End of adjusted styles */
-
-        /* Styles from previous version, adapted for left-column */
-        header {
-            background-color: #007bff;
-            color: white;
-            padding: 20px;
-            text-align: center;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-        }
-
-        header h1 {
-            margin: 0;
-            font-size: 1.8em;
-        }
-
-        .config-area {
-            padding: 20px;
-            border-bottom: 1px solid #eee;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-            align-items: center;
-        }
-
-        .config-area label {
-            font-weight: 500;
-            margin-right: 5px;
-        }
-
-        .config-area input[type="text"], .config-area select {
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            flex-grow: 1;
-            min-width: 100px; /* Adjusted min-width */
-        }
-
-        .chat-window {
-            flex-grow: 1;
-            padding: 20px;
-            overflow-y: auto;
-            min-height: 250px; 
-            border-bottom: 1px solid #eee;
-        }
-
-        .message {
-            margin-bottom: 15px;
-            padding: 10px 15px;
-            border-radius: 18px;
-            line-height: 1.5;
-            max-width: 90%; /* Adjusted for potentially narrower chat */
-            word-wrap: break-word;
-        }
-
-        .message.user {
-            background-color: #007bff;
-            color: white;
-            align-self: flex-end;
-            margin-left: auto;
-            border-bottom-right-radius: 4px;
-        }
-
-        .message.doctor {
-            background-color: #e9ecef;
-            color: #333;
-            align-self: flex-start;
-            border-bottom-left-radius: 4px;
-        }
-        
-        .message.doctor .sender-name {
-            font-weight: bold;
-            color: #555;
-            margin-bottom: 3px;
-            font-size: 0.9em;
-        }
-
-        .message.coach {
-            background-color: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeeba;
-            align-self: flex-start;
-            font-size: 0.95em;
-            margin-top: 5px;
-        }
-
-        .message.system {
-            background-color: #f0f0f0;
-            color: #555;
-            font-style: italic;
-            text-align: center;
-            font-size: 0.9em;
-            align-self: center;
-            width: 100%;
-            max-width: 100%;
-            padding: 8px;
-        }
-        
-        .message-content {
-            white-space: pre-wrap;
-        }
-
-        .input-area {
-            display: flex;
-            padding: 20px;
-            gap: 10px;
-        }
-
-        .input-area textarea {
-            flex-grow: 1;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            resize: none;
-            font-size: 1em;
-            min-height: 40px;
-        }
-
-        .input-area button {
-            padding: 10px 20px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 1em;
-            transition: background-color 0.2s ease;
-        }
-
-        .input-area button:hover {
-            background-color: #0056b3;
-        }
-        
-        .input-area button#end-training-btn {
-            background-color: #dc3545;
-        }
-        .input-area button#end-training-btn:hover {
-            background-color: #c82333;
-        }
-
-        .summary-report {
-            padding: 20px;
-            background-color: #f8f9fa;
-            border-top: 1px solid #eee;
-            white-space: pre-wrap;
-        }
-        .summary-report h3 {
-            margin-top: 0;
-            color: #007bff;
-        }
-
-        .spinner {
-            border: 4px solid #f3f3f3; 
-            border-top: 4px solid #007bff;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            animation: spin 1s linear infinite;
-            margin-left: 10px;
-            display: none;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
+        @import url('static/css/main.css');
+        @import url('static/css/evaluation.css');
+        @import url('static/css/chat.css');
     </style>
 </head>
 <body>
@@ -325,8 +45,10 @@
     
             <div class="input-area">
                 <textarea id="user-input" placeholder="请输入您的回复..." rows="2"></textarea>
+                <button id="voice-input-button" class="voice-btn"><i class="fas fa-microphone"></i></button>
                 <button id="send-btn">发送</button>
                 <button id="end-training-btn">结束训练</button>
+                <span id="recording-indicator" class="recording-indicator" style="display:none;">录音中...</span>
             </div>
         </div>
 
@@ -359,6 +81,8 @@
         const sendBtn = document.getElementById('send-btn');
         const startBtn = document.getElementById('start-btn');
         const endTrainingBtn = document.getElementById('end-training-btn');
+        const voiceInputBtn = document.getElementById('voice-input-button');
+        const recordingIndicator = document.getElementById('recording-indicator');
         const drugNameInput = document.getElementById('drug-name');
         const departmentInput = document.getElementById('department');
         const difficultySelect = document.getElementById('difficulty');
@@ -372,6 +96,319 @@
 
         let conversationActive = false;
         let currentDoctorName = "医生"; // Default doctor name
+        
+        // Voice recording variables
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        
+        // Streaming transcription variables
+        let transcribeWebSocket = null;
+        let audioContext = null;
+        let audioProcessor = null;
+        let audioStream = null;
+        let useStreamingTranscription = true; // 默认使用流式转录
+
+        // WebSocket utilities
+        async function initTranscribeWebSocket() {
+            if (transcribeWebSocket && transcribeWebSocket.readyState === WebSocket.OPEN) {
+                return transcribeWebSocket;
+            }
+            
+            if (transcribeWebSocket) {
+                transcribeWebSocket.close();
+            }
+            
+            return new Promise((resolve, reject) => {
+                console.log('连接转录WebSocket: ws://localhost:18765');
+                transcribeWebSocket = new WebSocket('ws://localhost:18765');
+                
+                transcribeWebSocket.onopen = () => {
+                    console.log('转录WebSocket连接已建立');
+                    resolve(transcribeWebSocket);
+                };
+                
+                transcribeWebSocket.onerror = (error) => {
+                    console.error('转录WebSocket错误:', error);
+                    reject(error);
+                };
+                
+                transcribeWebSocket.onclose = () => {
+                    console.log('转录WebSocket连接已关闭');
+                    transcribeWebSocket = null;
+                };
+            });
+        }
+
+        function closeTranscribeWebSocket() {
+            if (transcribeWebSocket) {
+                transcribeWebSocket.close();
+                transcribeWebSocket = null;
+            }
+        }
+
+        // Convert ArrayBuffer to Base64
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        // Streaming transcription functions
+        async function startStreamingRecording() {
+            try {
+                // 初始化WebSocket连接
+                const websocket = await initTranscribeWebSocket();
+                
+                // 转录状态管理
+                let confirmedText = ''; // 已确认的文本
+                let lastPartialText = ''; // 上一次的部分文本
+                let isTranscribing = false;
+                
+                // 设置WebSocket消息处理
+                websocket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('收到转录消息:', data.type, data.transcript || data.message);
+                        
+                        if (data.type === 'partial') {
+                            // 显示部分转录结果：确认文本 + 当前部分文本 + 提示符
+                            lastPartialText = data.transcript || '';
+                            const displayText = confirmedText + lastPartialText;
+                            userInput.value = displayText + (displayText ? '...' : '正在识别...');
+                            
+                        } else if (data.type === 'final') {
+                            // 最终结果：将final文本添加到确认文本中
+                            const finalText = data.transcript || '';
+                            if (finalText.trim()) {
+                                confirmedText += finalText;
+                                // 如果不是以空格或标点结尾，添加空格
+                                if (!confirmedText.endsWith(' ') && !confirmedText.match(/[。！？，、；：]$/)) {
+                                    confirmedText += ' ';
+                                }
+                            }
+                            
+                            // 清除部分文本，显示确认文本
+                            lastPartialText = '';
+                            userInput.value = confirmedText.trim();
+                            
+                        } else if (data.type === 'complete') {
+                            // 转录完成：显示最终完整结果
+                            let finalResult = '';
+                            
+                            if (data.transcript && data.transcript.trim()) {
+                                finalResult = data.transcript.trim();
+                            } else if (confirmedText.trim()) {
+                                finalResult = confirmedText.trim();
+                            }
+                            
+                            userInput.value = finalResult;
+                            userInput.disabled = false;
+                            userInput.focus();
+                            
+                            // 重置所有状态
+                            confirmedText = '';
+                            lastPartialText = '';
+                            isTranscribing = false;
+                            
+                            console.log('转录完成，最终结果:', finalResult);
+                            
+                        } else if (data.type === 'error') {
+                            console.error('转录错误:', data.message);
+                            userInput.value = '转录失败，请重试';
+                            userInput.disabled = false;
+                            
+                            // 重置状态
+                            confirmedText = '';
+                            lastPartialText = '';
+                            isTranscribing = false;
+                            
+                        } else if (data.type === 'info') {
+                            console.log('转录信息:', data.message);
+                            if (data.message && data.message.includes('开始')) {
+                                isTranscribing = true;
+                                confirmedText = '';
+                                lastPartialText = '';
+                                userInput.value = '🎤 开始识别语音...';
+                            }
+                        }
+                    } catch (error) {
+                        console.error('处理WebSocket消息时出错:', error);
+                    }
+                };
+                
+                // 获取音频流（添加更多音频优化）
+                audioStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        // 添加延迟优化
+                        latency: 0.01
+                    }
+                });
+                
+                // 创建音频处理器
+                audioContext = new AudioContext({
+                    sampleRate: 16000,
+                    latencyHint: 'interactive' // 优化延迟
+                });
+                const source = audioContext.createMediaStreamSource(audioStream);
+                audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                source.connect(audioProcessor);
+                audioProcessor.connect(audioContext.destination);
+                
+                // 通知服务器开始转录
+                websocket.send(JSON.stringify({
+                    type: 'start'
+                }));
+                
+                // 清空输入框并设置初始状态
+                userInput.value = '🎤 正在连接转录服务...';
+                userInput.disabled = true;
+                confirmedText = '';
+                lastPartialText = '';
+                
+                // 处理音频数据
+                audioProcessor.onaudioprocess = (e) => {
+                    if (isRecording && websocket.readyState === WebSocket.OPEN) {
+                        // 获取音频数据
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        
+                        // 转换为16位整数（使用更精确的转换）
+                        const pcmData = new Int16Array(inputData.length);
+                        for (let i = 0; i < inputData.length; i++) {
+                            // 限制范围并四舍五入
+                            const sample = Math.max(-1, Math.min(1, inputData[i]));
+                            pcmData[i] = Math.round(sample * 32767);
+                        }
+                        
+                        // 发送到服务器
+                        websocket.send(JSON.stringify({
+                            type: 'audio',
+                            data: arrayBufferToBase64(pcmData.buffer)
+                        }));
+                    }
+                };
+                
+            } catch (error) {
+                console.error('流式转录初始化失败:', error);
+                
+                // 重置录音状态
+                isRecording = false;
+                voiceInputBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                voiceInputBtn.classList.remove('recording');
+                recordingIndicator.style.display = 'none';
+                
+                // 根据错误类型处理
+                if (error.name === 'NotAllowedError') {
+                    userInput.value = '';
+                    userInput.disabled = false;
+                    throw error; // 重新抛出让上层处理
+                } else {
+                    // 如果WebSocket失败，回退到标准API
+                    useStreamingTranscription = false;
+                    await startStandardRecording();
+                }
+            }
+        }
+
+        async function startStandardRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioChunks = [];
+                
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    // Process recording data
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    
+                    // Show processing status
+                    const originalValue = userInput.value;
+                    userInput.value = "正在转录语音...";
+                    userInput.disabled = true;
+                    
+                    try {
+                        // Send to backend for transcription
+                        const formData = new FormData();
+                        formData.append('audio', audioBlob);
+                        
+                        const response = await fetch('http://127.0.0.1:18080/transcribe', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        if (!response.ok) {
+                            throw new Error('语音转录失败');
+                        }
+                        
+                        const data = await response.json();
+                        
+                        // Fill transcribed text into input box
+                        userInput.value = data.text;
+                        userInput.disabled = false;
+                        userInput.focus();
+                        
+                    } catch (error) {
+                        console.error('转录错误:', error);
+                        userInput.value = originalValue;
+                        userInput.disabled = false;
+                        alert('语音转录失败: ' + error.message);
+                    }
+                    
+                    // Close all audio tracks
+                    stream.getTracks().forEach(track => track.stop());
+                };
+                
+                mediaRecorder.start();
+                
+            } catch (error) {
+                console.error('无法访问麦克风:', error);
+                alert('无法访问麦克风: ' + error.message);
+            }
+        }
+
+        function stopStreamingRecording() {
+            // 停止流式录音
+            if (audioProcessor) {
+                audioProcessor.disconnect();
+                audioProcessor = null;
+            }
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+            }
+            
+            // 通知服务器录音结束
+            if (transcribeWebSocket && transcribeWebSocket.readyState === WebSocket.OPEN) {
+                transcribeWebSocket.send(JSON.stringify({
+                    type: 'end'
+                }));
+            }
+        }
+
+        function stopStandardRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        }
 
         function showLoading(show) {
             loadingSpinner.style.display = show ? 'inline-block' : 'none';
@@ -390,6 +427,18 @@
                 senderNameDiv.classList.add('sender-name');
                 senderNameDiv.textContent = sender; // sender here is the cleaned doctor name
                 messageDiv.appendChild(senderNameDiv);
+                
+                // 添加语音播放按钮
+                const speakButton = document.createElement('button');
+                speakButton.classList.add('speak-button');
+                speakButton.innerHTML = '🔊';
+                speakButton.title = '播放语音';
+                speakButton.onclick = () => playTextToSpeech(text, speakButton);
+                
+                const buttonContainer = document.createElement('div');
+                buttonContainer.classList.add('message-actions');
+                buttonContainer.appendChild(speakButton);
+                messageDiv.appendChild(buttonContainer);
             }
             
             messageDiv.appendChild(contentDiv);
@@ -400,7 +449,7 @@
         async function sendMessageToBackend(message) {
             showLoading(true);
             try {
-                const response = await fetch('http://127.0.0.1:5000/chat', {
+                const response = await fetch('http://127.0.0.1:18080/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -485,7 +534,7 @@
             }
         }
 
-        startBtn.addEventListener('click', () => {
+        startBtn.addEventListener('click', async () => {
             const drug = drugNameInput.value.trim();
             const department = departmentInput.value.trim();
             const difficulty = difficultySelect.value;
@@ -494,12 +543,29 @@
                 addMessage("System", "请输入药品和科室信息。", 'system');
                 return;
             }
+            
+            // 清理前端状态
             chatWindow.innerHTML = ''; // Clear chat window
             summaryReportDiv.style.display = 'none';
             summaryContentDiv.textContent = '';
             doctorProfileContent.textContent = '正在加载医生档案...';
             realtimeEvaluationContent.textContent = '等待用户回复后进行评估...';
+            conversationActive = false; // 重置会话状态
 
+            try {
+                // 首先发送重置信号给后端
+                await fetch('http://127.0.0.1:18080/reset', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                console.log('后端状态已重置');
+            } catch (error) {
+                console.warn('重置后端状态失败，继续启动训练:', error);
+            }
+
+            // 然后发送开始训练消息
             const startMessage = `药品: ${drug}；科室: ${department}；难度: ${difficulty}。点击【Start】`;
             addMessage("User", startMessage, 'user');
             sendMessageToBackend(startMessage);
@@ -541,6 +607,159 @@
                 addMessage("System", "当前没有正在进行的训练。", 'system');
             }
         });
+
+        // Text-to-Speech functionality
+        let currentAudio = null; // 用于跟踪当前播放的音频
+        
+        async function playTextToSpeech(text, button) {
+            try {
+                // 如果有音频正在播放，先停止
+                if (currentAudio) {
+                    currentAudio.pause();
+                    currentAudio = null;
+                    // 重置所有按钮状态
+                    document.querySelectorAll('.speak-button').forEach(btn => {
+                        btn.innerHTML = '🔊';
+                        btn.disabled = false;
+                    });
+                }
+                
+                // 更新按钮状态
+                button.innerHTML = '⏳';
+                button.disabled = true;
+                
+                // 调用后端TTS API
+                const response = await fetch('http://127.0.0.1:18080/text-to-speech', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        text: text,
+                        voice_id: 'Zhiyu' // 中文女声
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`TTS请求失败: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // 创建音频对象并播放
+                const audioBlob = new Blob([
+                    Uint8Array.from(atob(data.audio_data), c => c.charCodeAt(0))
+                ], { type: data.content_type });
+                
+                const audioUrl = URL.createObjectURL(audioBlob);
+                currentAudio = new Audio(audioUrl);
+                
+                // 更新按钮为播放状态
+                button.innerHTML = '⏸️';
+                button.disabled = false;
+                
+                // 播放音频
+                await currentAudio.play();
+                
+                // 监听播放结束
+                currentAudio.onended = () => {
+                    button.innerHTML = '🔊';
+                    URL.revokeObjectURL(audioUrl);
+                    currentAudio = null;
+                };
+                
+                // 监听播放错误
+                currentAudio.onerror = (e) => {
+                    console.error('音频播放错误:', e);
+                    button.innerHTML = '❌';
+                    setTimeout(() => {
+                        button.innerHTML = '🔊';
+                        button.disabled = false;
+                    }, 2000);
+                    URL.revokeObjectURL(audioUrl);
+                    currentAudio = null;
+                };
+                
+                // 点击按钮暂停/恢复播放
+                button.onclick = () => {
+                    if (currentAudio) {
+                        if (currentAudio.paused) {
+                            currentAudio.play();
+                            button.innerHTML = '⏸️';
+                        } else {
+                            currentAudio.pause();
+                            button.innerHTML = '▶️';
+                        }
+                    } else {
+                        // 重新播放
+                        playTextToSpeech(text, button);
+                    }
+                };
+                
+            } catch (error) {
+                console.error('TTS播放失败:', error);
+                button.innerHTML = '❌';
+                button.disabled = false;
+                
+                // 2秒后恢复按钮状态
+                setTimeout(() => {
+                    button.innerHTML = '🔊';
+                    button.onclick = () => playTextToSpeech(text, button);
+                }, 2000);
+            }
+        }
+
+        // Voice input functionality
+        async function toggleRecording() {
+            if (isRecording) {
+                // Stop recording
+                if (useStreamingTranscription) {
+                    stopStreamingRecording();
+                } else {
+                    stopStandardRecording();
+                }
+                
+                voiceInputBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                voiceInputBtn.classList.remove('recording');
+                recordingIndicator.style.display = 'none';
+                isRecording = false;
+            } else {
+                // Start recording - 添加权限检查
+                try {
+                    // 先检查麦克风权限
+                    const permissionStatus = await navigator.permissions.query({name: 'microphone'});
+                    
+                    // 设置录音状态
+                    isRecording = true;
+                    voiceInputBtn.innerHTML = '<i class="fas fa-stop"></i>';
+                    voiceInputBtn.classList.add('recording');
+                    recordingIndicator.style.display = 'inline';
+                    
+                    if (useStreamingTranscription) {
+                        await startStreamingRecording();
+                    } else {
+                        await startStandardRecording();
+                    }
+                } catch (error) {
+                    console.error('录音启动失败:', error);
+                    // 重置UI状态
+                    isRecording = false;
+                    voiceInputBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+                    voiceInputBtn.classList.remove('recording');
+                    recordingIndicator.style.display = 'none';
+                    
+                    // 显示友好的错误提示
+                    if (error.name === 'NotAllowedError') {
+                        alert('需要麦克风权限才能使用语音输入功能。请在浏览器设置中允许麦克风访问。');
+                    } else {
+                        alert('无法启动录音: ' + error.message);
+                    }
+                }
+            }
+        }
+
+        // Add voice button click event
+        voiceInputBtn.addEventListener('click', toggleRecording);
 
     </script>
 </body>
