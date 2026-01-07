@@ -3,3 +3,4 @@ strands-agents-tools
 flask
 flask_cors
 python-dotenv
+boto3
