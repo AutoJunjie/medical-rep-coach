@@ -72,6 +72,57 @@ def voice_status():
     })
 
 
+@app.route('/voice/tts', methods=['POST'])
+def text_to_speech():
+    """
+    Endpoint to convert text to speech using Nova Sonic.
+    Returns audio data that can be played in the browser.
+    """
+    if not voice_enabled:
+        return jsonify({"error": "Voice functionality is not available"}), 503
+    
+    try:
+        data = request.get_json()
+        text = data.get('text')
+        system_prompt = data.get('system_prompt')
+        
+        if not text:
+            return jsonify({"error": "Missing text parameter"}), 400
+        
+        # Generate TTS audio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        audio_chunks = []
+        
+        async def generate_audio():
+            async for event in voice_handler.process_text_to_speech(text, system_prompt):
+                if event.get('type') == 'audio':
+                    audio_chunks.append(event['audio'])
+                elif event.get('type') == 'error':
+                    logger.error(f"TTS error: {event['error']}")
+                    raise Exception(event['error'])
+        
+        loop.run_until_complete(generate_audio())
+        loop.close()
+        
+        if not audio_chunks:
+            return jsonify({"error": "No audio generated"}), 500
+        
+        # Combine all audio chunks
+        combined_audio = b''.join(audio_chunks)
+        
+        # Return base64 encoded audio
+        return jsonify({
+            "audio": base64.b64encode(combined_audio).decode('utf-8'),
+            "format": "pcm"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in text-to-speech endpoint: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @sock.route('/voice/stream')
 def voice_stream(ws):
     """
@@ -168,15 +219,7 @@ def voice_stream(ws):
                     else:
                         system_prompt = "你是一个医药代表培训协调员。"
                     
-                    # Process the audio with Nova Sonic (simplified for demo)
-                    # In real implementation, you would:
-                    # 1. Send accumulated audio to Nova Sonic
-                    # 2. Get ASR transcription
-                    # 3. Get text response
-                    # 4. Get TTS audio
-                    # 5. Stream back to client
-                    
-                    # For now, send a mock response
+                    # Process the audio with Nova Sonic
                     ws.send(json.dumps({
                         "type": "processing",
                         "message": "Processing your speech..."
@@ -199,6 +242,13 @@ def voice_stream(ws):
                             doctor_name = parts[0].replace("Doctor", "").strip()
                             message_text = parts[1].strip() if len(parts) > 1 else ''
                             
+                            # Clean up the message text
+                            message_text = message_text.replace(" _ObjectionTool_", "").replace(" _EvalTool_", "").strip()
+                            if message_text.startswith("Response: "):
+                                message_text = message_text[len("Response: "):].strip()
+                            if doctor_name and message_text.startswith(doctor_name + ": "):
+                                message_text = message_text[len(doctor_name + ": "):].strip()
+                            
                             # Send text response
                             ws.send(json.dumps({
                                 "type": "text_response",
@@ -206,23 +256,53 @@ def voice_stream(ws):
                                 "speaker": f"Doctor {doctor_name}"
                             }))
                             
-                            # Generate TTS audio for doctor response
-                            # This is where you would call Nova Sonic TTS
-                            # For now, send a placeholder
-                            ws.send(json.dumps({
-                                "type": "audio_start",
-                                "speaker": f"Doctor {doctor_name}"
-                            }))
-                            
-                            # In real implementation, stream audio chunks here
-                            # ws.send(json.dumps({
-                            #     "type": "audio_chunk",
-                            #     "audio": base64.b64encode(audio_chunk).decode('utf-8')
-                            # }))
-                            
-                            ws.send(json.dumps({
-                                "type": "audio_end"
-                            }))
+                            # Generate TTS audio for doctor response using Nova Sonic
+                            if voice_handler and message_text:
+                                try:
+                                    ws.send(json.dumps({
+                                        "type": "audio_start",
+                                        "speaker": f"Doctor {doctor_name}"
+                                    }))
+                                    
+                                    # Use asyncio to process TTS
+                                    loop = asyncio.new_event_loop()
+                                    asyncio.set_event_loop(loop)
+                                    
+                                    async def generate_and_send_audio():
+                                        async for event in voice_handler.process_text_to_speech(
+                                            message_text,
+                                            system_prompt
+                                        ):
+                                            if event.get('type') == 'audio':
+                                                # Send audio chunk to client
+                                                audio_bytes = event['audio']
+                                                ws.send(json.dumps({
+                                                    "type": "audio_chunk",
+                                                    "audio": base64.b64encode(audio_bytes).decode('utf-8')
+                                                }))
+                                            elif event.get('type') == 'error':
+                                                logger.error(f"TTS error: {event['error']}")
+                                                ws.send(json.dumps({
+                                                    "type": "error",
+                                                    "error": f"TTS error: {event['error']}"
+                                                }))
+                                    
+                                    loop.run_until_complete(generate_and_send_audio())
+                                    loop.close()
+                                    
+                                    ws.send(json.dumps({
+                                        "type": "audio_end"
+                                    }))
+                                    
+                                except Exception as e:
+                                    logger.error(f"Error generating TTS audio: {e}")
+                                    ws.send(json.dumps({
+                                        "type": "error",
+                                        "error": f"Failed to generate audio: {str(e)}"
+                                    }))
+                                    ws.send(json.dumps({
+                                        "type": "audio_end"
+                                    }))
                         
                         elif response.startswith("Coach"):
                             coach_message = response.replace("Coach ▶", "").strip()
