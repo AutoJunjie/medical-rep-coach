@@ -263,6 +263,30 @@
             background-color: #c82333;
         }
 
+        .input-area button#voice-record-btn {
+            background-color: #28a745;
+            min-width: 80px;
+        }
+        .input-area button#voice-record-btn:hover {
+            background-color: #218838;
+        }
+        .input-area button#voice-record-btn.recording {
+            background-color: #dc3545;
+            animation: pulse 1.5s infinite;
+        }
+        .input-area button#voice-record-btn.recording:hover {
+            background-color: #c82333;
+        }
+        .input-area button#voice-record-btn.processing {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
         .summary-report {
             padding: 20px;
             background-color: #f8f9fa;
@@ -325,6 +349,7 @@
     
             <div class="input-area">
                 <textarea id="user-input" placeholder="请输入您的回复..." rows="2"></textarea>
+                <button id="voice-record-btn" title="点击开始录音">录音</button>
                 <button id="send-btn">发送</button>
                 <button id="end-training-btn">结束训练</button>
             </div>
@@ -359,6 +384,7 @@
         const sendBtn = document.getElementById('send-btn');
         const startBtn = document.getElementById('start-btn');
         const endTrainingBtn = document.getElementById('end-training-btn');
+        const voiceRecordBtn = document.getElementById('voice-record-btn');
         const drugNameInput = document.getElementById('drug-name');
         const departmentInput = document.getElementById('department');
         const difficultySelect = document.getElementById('difficulty');
@@ -372,9 +398,133 @@
 
         let conversationActive = false;
         let currentDoctorName = "医生"; // Default doctor name
+        
+        // Voice recording variables
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
 
         function showLoading(show) {
             loadingSpinner.style.display = show ? 'inline-block' : 'none';
+        }
+
+        // Voice recording functions
+        async function startRecording() {
+            try {
+                // Request microphone access
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // Create MediaRecorder instance
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                // Collect audio data
+                mediaRecorder.addEventListener('dataavailable', event => {
+                    audioChunks.push(event.data);
+                });
+                
+                // Handle recording stop
+                mediaRecorder.addEventListener('stop', async () => {
+                    // Stop all audio tracks
+                    stream.getTracks().forEach(track => track.stop());
+                    
+                    // Create audio blob
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    
+                    // Send to backend for transcription
+                    await transcribeAudio(audioBlob);
+                });
+                
+                // Start recording
+                mediaRecorder.start();
+                isRecording = true;
+                
+                // Update button state
+                voiceRecordBtn.classList.add('recording');
+                voiceRecordBtn.textContent = '停止录音';
+                voiceRecordBtn.title = '点击停止录音';
+                
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                let errorMessage = '无法访问麦克风。';
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    errorMessage = '麦克风访问被拒绝。请允许浏览器访问麦克风。';
+                } else if (error.name === 'NotFoundError') {
+                    errorMessage = '未找到麦克风设备。';
+                }
+                addMessage("System", errorMessage, 'system');
+                resetRecordButton();
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                
+                // Update button to processing state
+                voiceRecordBtn.classList.remove('recording');
+                voiceRecordBtn.classList.add('processing');
+                voiceRecordBtn.textContent = '处理中...';
+                voiceRecordBtn.disabled = true;
+                voiceRecordBtn.title = '正在转录音频';
+            }
+        }
+
+        async function transcribeAudio(audioBlob) {
+            try {
+                // Create FormData and append audio file
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'recording.webm');
+                
+                // Send to backend
+                const response = await fetch('http://127.0.0.1:5000/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: "转录失败，无法解析错误信息。" }));
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.text) {
+                    // Insert transcribed text into textarea
+                    const currentText = userInput.value.trim();
+                    if (currentText) {
+                        userInput.value = currentText + ' ' + data.text;
+                    } else {
+                        userInput.value = data.text;
+                    }
+                    
+                    // Auto-resize textarea
+                    userInput.style.height = 'auto';
+                    userInput.style.height = userInput.scrollHeight + 'px';
+                    
+                    // Focus on textarea
+                    userInput.focus();
+                    
+                    addMessage("System", "语音转录完成。", 'system');
+                } else {
+                    addMessage("System", "转录结果为空。", 'system');
+                }
+                
+            } catch (error) {
+                console.error('Error transcribing audio:', error);
+                addMessage("System", `转录错误: ${error.message}`, 'system');
+            } finally {
+                resetRecordButton();
+            }
+        }
+
+        function resetRecordButton() {
+            voiceRecordBtn.classList.remove('recording', 'processing');
+            voiceRecordBtn.textContent = '录音';
+            voiceRecordBtn.disabled = false;
+            voiceRecordBtn.title = '点击开始录音';
+            isRecording = false;
         }
 
         function addMessage(sender, text, type) {
@@ -539,6 +689,14 @@
                 sendMessageToBackend(endMessage);
             } else {
                 addMessage("System", "当前没有正在进行的训练。", 'system');
+            }
+        });
+
+        voiceRecordBtn.addEventListener('click', () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
             }
         });
 
