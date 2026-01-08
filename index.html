@@ -262,6 +262,101 @@
         .input-area button#end-training-btn:hover {
             background-color: #c82333;
         }
+        
+        /* Voice Control Styles */
+        .voice-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #eee;
+        }
+        
+        .voice-controls button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .voice-controls button#voice-toggle-btn {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        .voice-controls button#voice-toggle-btn:hover {
+            background-color: #218838;
+        }
+        
+        .voice-controls button#voice-toggle-btn.recording {
+            background-color: #dc3545;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .voice-controls button#voice-toggle-btn.recording:hover {
+            background-color: #c82333;
+        }
+        
+        .voice-controls button#voice-toggle-btn:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .voice-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9em;
+            color: #555;
+        }
+        
+        .voice-indicator .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #6c757d;
+        }
+        
+        .voice-indicator .status-dot.idle {
+            background-color: #6c757d;
+        }
+        
+        .voice-indicator .status-dot.recording {
+            background-color: #dc3545;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .voice-indicator .status-dot.processing {
+            background-color: #ffc107;
+            animation: pulse 1s infinite;
+        }
+        
+        .voice-indicator .status-dot.speaking {
+            background-color: #007bff;
+            animation: pulse 1s infinite;
+        }
+        
+        .voice-status-text {
+            font-size: 0.85em;
+            color: #666;
+        }
+        
+        .microphone-icon {
+            width: 20px;
+            height: 20px;
+        }
 
         .summary-report {
             padding: 20px;
@@ -327,6 +422,20 @@
                 <textarea id="user-input" placeholder="请输入您的回复..." rows="2"></textarea>
                 <button id="send-btn">发送</button>
                 <button id="end-training-btn">结束训练</button>
+            </div>
+            
+            <div class="voice-controls">
+                <button id="voice-toggle-btn" disabled>
+                    <svg class="microphone-icon" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                    </svg>
+                    <span id="voice-btn-text">启用语音</span>
+                </button>
+                <div class="voice-indicator">
+                    <div class="status-dot idle" id="voice-status-dot"></div>
+                    <span class="voice-status-text" id="voice-status-text">语音未激活</span>
+                </div>
             </div>
         </div>
 
@@ -541,6 +650,371 @@
                 addMessage("System", "当前没有正在进行的训练。", 'system');
             }
         });
+
+        // ========================================
+        // Voice Interaction Functionality
+        // ========================================
+        
+        const voiceToggleBtn = document.getElementById('voice-toggle-btn');
+        const voiceBtnText = document.getElementById('voice-btn-text');
+        const voiceStatusDot = document.getElementById('voice-status-dot');
+        const voiceStatusText = document.getElementById('voice-status-text');
+        
+        let voiceEnabled = false;
+        let isRecording = false;
+        let audioContext = null;
+        let mediaStream = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let websocket = null;
+        let currentSessionId = null;
+        let audioPlaybackQueue = [];
+        let isPlayingAudio = false;
+        
+        // Check if voice functionality is available on the backend
+        async function checkVoiceAvailability() {
+            try {
+                const response = await fetch('http://127.0.0.1:5000/voice/status');
+                const data = await response.json();
+                
+                if (data.enabled) {
+                    voiceEnabled = true;
+                    voiceToggleBtn.disabled = false;
+                    voiceStatusText.textContent = '语音就绪';
+                    console.log('Voice functionality is available');
+                } else {
+                    voiceStatusText.textContent = '语音功能未启用';
+                    console.log('Voice functionality is not available');
+                }
+            } catch (error) {
+                console.error('Error checking voice availability:', error);
+                voiceStatusText.textContent = '语音功能检查失败';
+            }
+        }
+        
+        // Initialize audio context
+        function initAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log('Audio context initialized');
+            }
+        }
+        
+        // Request microphone access
+        async function requestMicrophoneAccess() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 16000
+                    } 
+                });
+                console.log('Microphone access granted');
+                return true;
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                addMessage("System", "无法访问麦克风。请确保已授予麦克风权限。", 'system');
+                return false;
+            }
+        }
+        
+        // Connect to WebSocket for voice streaming
+        function connectVoiceWebSocket() {
+            return new Promise((resolve, reject) => {
+                try {
+                    websocket = new WebSocket('ws://127.0.0.1:5000/voice/stream');
+                    
+                    websocket.onopen = () => {
+                        console.log('WebSocket connected');
+                        updateVoiceStatus('idle', '已连接');
+                        resolve();
+                    };
+                    
+                    websocket.onmessage = (event) => {
+                        handleVoiceMessage(event.data);
+                    };
+                    
+                    websocket.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        addMessage("System", "语音连接错误", 'system');
+                        reject(error);
+                    };
+                    
+                    websocket.onclose = () => {
+                        console.log('WebSocket closed');
+                        updateVoiceStatus('idle', '已断开');
+                        websocket = null;
+                    };
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }
+        
+        // Handle messages from voice WebSocket
+        function handleVoiceMessage(data) {
+            try {
+                const message = JSON.parse(data);
+                
+                switch (message.type) {
+                    case 'connected':
+                        console.log('Voice stream connected');
+                        break;
+                    
+                    case 'session_started':
+                        currentSessionId = message.session_id;
+                        console.log('Voice session started:', currentSessionId);
+                        break;
+                    
+                    case 'transcription':
+                        // Display ASR transcription
+                        addMessage("User", message.text, 'user');
+                        break;
+                    
+                    case 'text_response':
+                        // Display text response
+                        const speaker = message.speaker || 'System';
+                        if (speaker.startsWith('Doctor')) {
+                            const doctorName = speaker.replace('Doctor', '').trim();
+                            addMessage(doctorName, message.text, 'doctor');
+                        } else if (speaker === 'Coach') {
+                            // Update evaluation panel
+                            if (window.marked) {
+                                realtimeEvaluationContent.innerHTML = marked.parse(message.text);
+                            } else {
+                                realtimeEvaluationContent.textContent = message.text;
+                            }
+                        } else {
+                            addMessage(speaker, message.text, 'system');
+                        }
+                        break;
+                    
+                    case 'audio_start':
+                        updateVoiceStatus('speaking', 'AI 正在说话');
+                        break;
+                    
+                    case 'audio_chunk':
+                        // Queue audio chunk for playback
+                        const audioData = base64ToArrayBuffer(message.audio);
+                        audioPlaybackQueue.push(audioData);
+                        playNextAudioChunk();
+                        break;
+                    
+                    case 'audio_end':
+                        updateVoiceStatus('idle', '等待输入');
+                        break;
+                    
+                    case 'processing':
+                        updateVoiceStatus('processing', message.message || '处理中...');
+                        break;
+                    
+                    case 'processing_complete':
+                        updateVoiceStatus('idle', '等待输入');
+                        break;
+                    
+                    case 'system_message':
+                        addMessage("System", message.text, 'system');
+                        break;
+                    
+                    case 'error':
+                        console.error('Voice error:', message.error);
+                        addMessage("System", `语音错误: ${message.error}`, 'system');
+                        updateVoiceStatus('idle', '错误');
+                        break;
+                    
+                    case 'session_ended':
+                        console.log('Voice session ended');
+                        currentSessionId = null;
+                        break;
+                }
+            } catch (error) {
+                console.error('Error handling voice message:', error);
+            }
+        }
+        
+        // Update voice status indicator
+        function updateVoiceStatus(status, text) {
+            voiceStatusDot.className = `status-dot ${status}`;
+            voiceStatusText.textContent = text;
+        }
+        
+        // Start audio recording
+        async function startRecording() {
+            if (isRecording) return;
+            
+            try {
+                initAudioContext();
+                
+                if (!mediaStream) {
+                    const granted = await requestMicrophoneAccess();
+                    if (!granted) return;
+                }
+                
+                if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                    await connectVoiceWebSocket();
+                }
+                
+                // Start new session
+                const sessionId = 'session_' + Date.now();
+                const doctorPersona = currentDoctorName ? {
+                    name: currentDoctorName,
+                    specialty: departmentInput.value
+                } : null;
+                
+                websocket.send(JSON.stringify({
+                    type: 'start_session',
+                    session_id: sessionId,
+                    system_prompt: '你是一个医药代表培训协调员。',
+                    doctor_persona: doctorPersona
+                }));
+                
+                // Set up media recorder
+                audioChunks = [];
+                
+                // Use MediaRecorder to capture audio
+                const options = { mimeType: 'audio/webm' };
+                mediaRecorder = new MediaRecorder(mediaStream, options);
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    console.log('Recording stopped, processing audio...');
+                    
+                    if (audioChunks.length > 0) {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        
+                        // Convert to base64 and send
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const base64Audio = reader.result.split(',')[1];
+                            
+                            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                                // Send audio data
+                                websocket.send(JSON.stringify({
+                                    type: 'audio_chunk',
+                                    audio: base64Audio
+                                }));
+                                
+                                // Signal end of audio
+                                websocket.send(JSON.stringify({
+                                    type: 'audio_end',
+                                    transcription: '(语音输入)' // Placeholder
+                                }));
+                            }
+                        };
+                        reader.readAsDataURL(audioBlob);
+                    }
+                    
+                    audioChunks = [];
+                };
+                
+                mediaRecorder.start(1000); // Capture in 1-second chunks
+                isRecording = true;
+                
+                voiceToggleBtn.classList.add('recording');
+                voiceBtnText.textContent = '停止录音';
+                updateVoiceStatus('recording', '正在录音...');
+                
+                console.log('Recording started');
+                
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                addMessage("System", `启动录音失败: ${error.message}`, 'system');
+            }
+        }
+        
+        // Stop audio recording
+        function stopRecording() {
+            if (!isRecording) return;
+            
+            try {
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+                
+                isRecording = false;
+                voiceToggleBtn.classList.remove('recording');
+                voiceBtnText.textContent = '开始录音';
+                updateVoiceStatus('processing', '处理中...');
+                
+                console.log('Recording stopped');
+                
+            } catch (error) {
+                console.error('Error stopping recording:', error);
+            }
+        }
+        
+        // Play audio chunks
+        async function playNextAudioChunk() {
+            if (isPlayingAudio || audioPlaybackQueue.length === 0) return;
+            
+            isPlayingAudio = true;
+            const audioData = audioPlaybackQueue.shift();
+            
+            try {
+                const audioBuffer = await audioContext.decodeAudioData(audioData);
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                
+                source.onended = () => {
+                    isPlayingAudio = false;
+                    playNextAudioChunk(); // Play next chunk if available
+                };
+                
+                source.start();
+            } catch (error) {
+                console.error('Error playing audio:', error);
+                isPlayingAudio = false;
+            }
+        }
+        
+        // Convert base64 to ArrayBuffer
+        function base64ToArrayBuffer(base64) {
+            const binaryString = window.atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+        
+        // Voice toggle button click handler
+        voiceToggleBtn.addEventListener('click', () => {
+            if (!conversationActive) {
+                addMessage("System", "请先点击 Start 开始训练。", 'system');
+                return;
+            }
+            
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
+        
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (websocket) {
+                websocket.close();
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+        });
+        
+        // Initialize voice availability check
+        checkVoiceAvailability();
 
     </script>
 </body>
