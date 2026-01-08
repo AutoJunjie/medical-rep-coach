@@ -6,10 +6,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS # 方便本地开发时处理跨域问题
 from flask_sock import Sock
 import json
-import asyncio
 import base64
+import uuid
 from utils.agent import PharmaRepCoachAgent # 假设您的 agent 在 medical_agent.py
 from utils.voice_handler import NovaSonicVoiceHandler, ConversationContext
+from utils.tools import scenario_tool, objection_tool, eval_tool
 import logging
 
 # Configure logging
@@ -17,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app) # 允许所有来源的跨域请求，仅用于开发
+CORS(app) # 允许所有来源的跨域请求,仅用于开发
 sock = Sock(app)
 
 # 初始化 PharmaRepCoachAgent
@@ -26,8 +27,14 @@ coach_agent = PharmaRepCoachAgent()
 # Initialize voice handler
 try:
     voice_handler = NovaSonicVoiceHandler()
+    
+    # Register tools with the voice handler
+    voice_handler.register_tool("scenario_tool", scenario_tool)
+    voice_handler.register_tool("objection_tool", objection_tool)
+    voice_handler.register_tool("eval_tool", eval_tool)
+    
     voice_enabled = True
-    logger.info("Voice handler initialized successfully")
+    logger.info("Voice handler initialized successfully with tools")
 except Exception as e:
     logger.warning(f"Failed to initialize voice handler: {e}. Voice features will be disabled.")
     voice_handler = None
@@ -35,6 +42,75 @@ except Exception as e:
 
 # Store active voice sessions
 voice_sessions = {}
+
+# Define tool schemas for Nova Sonic
+TOOL_DEFINITIONS = [
+    {
+        "name": "scenario_tool",
+        "description": "Generate doctor persona and opening line for a medical training scenario",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "drug": {
+                    "type": "string",
+                    "description": "Name of the drug"
+                },
+                "specialty": {
+                    "type": "string",
+                    "description": "Medical specialty of the doctor"
+                },
+                "level": {
+                    "type": "string",
+                    "enum": ["basic", "intermediate", "advanced"],
+                    "description": "Experience level of the doctor"
+                },
+                "lang": {
+                    "type": "string",
+                    "enum": ["zh", "en"],
+                    "description": "Language for the response"
+                }
+            },
+            "required": ["drug", "specialty"]
+        }
+    },
+    {
+        "name": "objection_tool",
+        "description": "List common objections and key points for handling them for a specific drug and topic",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "drug": {
+                    "type": "string",
+                    "description": "Name of the drug"
+                },
+                "topic": {
+                    "type": "string",
+                    "enum": ["efficacy", "safety", "cost", "convenience"],
+                    "description": "Topic of concern"
+                }
+            },
+            "required": ["drug", "topic"]
+        }
+    },
+    {
+        "name": "eval_tool",
+        "description": "Evaluate the medical representative's response for accuracy and compliance",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repUtterance": {
+                    "type": "string",
+                    "description": "The medical representative's response"
+                },
+                "context": {
+                    "type": "string",
+                    "description": "The conversation context"
+                }
+            },
+            "required": ["repUtterance", "context"]
+        }
+    }
+]
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -76,7 +152,7 @@ def voice_status():
 def voice_stream(ws):
     """
     WebSocket endpoint for bidirectional voice streaming.
-    Handles real-time audio communication with Nova Sonic.
+    Handles real-time audio communication with Nova Sonic and tool execution.
     """
     if not voice_enabled:
         ws.send(json.dumps({
@@ -111,14 +187,16 @@ def voice_stream(ws):
                 
                 if message_type == 'start_session':
                     # Start a new voice session
-                    session_id = data.get('session_id')
-                    system_prompt = data.get('system_prompt', '')
+                    session_id = data.get('session_id', str(uuid.uuid4()))
+                    system_prompt = data.get('system_prompt', '你是一个医药代表培训协调员。')
                     doctor_persona = data.get('doctor_persona')
                     
                     if doctor_persona:
                         conversation_context.set_doctor_persona(doctor_persona)
+                        system_prompt = coach_agent._get_doctor_system_prompt()
                     
                     conversation_context.current_session_id = session_id
+                    conversation_context.current_prompt_name = f"prompt_{uuid.uuid4().hex[:8]}"
                     voice_sessions[session_id] = conversation_context
                     
                     logger.info(f"Started voice session: {session_id}")
@@ -128,7 +206,7 @@ def voice_stream(ws):
                     }))
                 
                 elif message_type == 'audio_chunk':
-                    # Receive audio chunk from client
+                    # Receive and buffer audio chunk from client
                     audio_data = base64.b64decode(data.get('audio', ''))
                     
                     if not session_id or session_id not in voice_sessions:
@@ -138,9 +216,11 @@ def voice_stream(ws):
                         }))
                         continue
                     
-                    # Process audio chunk (this is simplified)
-                    # In a real implementation, you would buffer chunks and process them
-                    logger.debug(f"Received audio chunk: {len(audio_data)} bytes")
+                    # Buffer the audio chunk
+                    ctx = voice_sessions[session_id]
+                    ctx.add_audio_chunk(audio_data)
+                    
+                    logger.debug(f"Buffered audio chunk: {len(audio_data)} bytes")
                     
                     # Send acknowledgment
                     ws.send(json.dumps({
@@ -149,7 +229,7 @@ def voice_stream(ws):
                     }))
                 
                 elif message_type == 'audio_end':
-                    # Client finished sending audio
+                    # Client finished sending audio - process with Nova Sonic
                     if not session_id or session_id not in voice_sessions:
                         ws.send(json.dumps({
                             "type": "error",
@@ -157,91 +237,109 @@ def voice_stream(ws):
                         }))
                         continue
                     
-                    logger.info("Audio input ended, processing...")
+                    logger.info("Audio input ended, processing with Nova Sonic...")
+                    
+                    # Get the conversation context
+                    ctx = voice_sessions[session_id]
+                    audio_chunks = ctx.clear_audio_buffer()
+                    
+                    if not audio_chunks:
+                        ws.send(json.dumps({
+                            "type": "error",
+                            "error": "No audio data received"
+                        }))
+                        continue
                     
                     # Get the system prompt based on current state
-                    ctx = voice_sessions[session_id]
                     doctor_persona = ctx.get_doctor_persona()
-                    
                     if doctor_persona:
                         system_prompt = coach_agent._get_doctor_system_prompt()
                     else:
                         system_prompt = "你是一个医药代表培训协调员。"
                     
-                    # Process the audio with Nova Sonic (simplified for demo)
-                    # In real implementation, you would:
-                    # 1. Send accumulated audio to Nova Sonic
-                    # 2. Get ASR transcription
-                    # 3. Get text response
-                    # 4. Get TTS audio
-                    # 5. Stream back to client
-                    
-                    # For now, send a mock response
+                    # Send processing notification
                     ws.send(json.dumps({
                         "type": "processing",
-                        "message": "Processing your speech..."
+                        "message": "Processing your speech with Nova Sonic..."
                     }))
                     
-                    # Simulate ASR transcription
-                    transcription = data.get('transcription', '用户语音输入')
-                    ws.send(json.dumps({
-                        "type": "transcription",
-                        "text": transcription,
-                        "role": "user"
-                    }))
+                    # Invoke Nova Sonic with bidirectional streaming and tool support
+                    response_events = voice_handler.invoke_bidirectional_stream(
+                        session_id=ctx.current_session_id,
+                        prompt_name=ctx.current_prompt_name,
+                        system_prompt=system_prompt,
+                        audio_chunks=audio_chunks,
+                        tools=TOOL_DEFINITIONS
+                    )
                     
-                    # Get response from agent
-                    agent_responses = coach_agent.handle_message(transcription)
-                    
-                    for response in agent_responses:
-                        if response.startswith("Doctor"):
-                            parts = response.split('▶', 2)
-                            doctor_name = parts[0].replace("Doctor", "").strip()
-                            message_text = parts[1].strip() if len(parts) > 1 else ''
-                            
-                            # Send text response
-                            ws.send(json.dumps({
-                                "type": "text_response",
-                                "text": message_text,
-                                "speaker": f"Doctor {doctor_name}"
-                            }))
-                            
-                            # Generate TTS audio for doctor response
-                            # This is where you would call Nova Sonic TTS
-                            # For now, send a placeholder
-                            ws.send(json.dumps({
-                                "type": "audio_start",
-                                "speaker": f"Doctor {doctor_name}"
-                            }))
-                            
-                            # In real implementation, stream audio chunks here
-                            # ws.send(json.dumps({
-                            #     "type": "audio_chunk",
-                            #     "audio": base64.b64encode(audio_chunk).decode('utf-8')
-                            # }))
+                    # Process and send response events to client
+                    for event in response_events:
+                        event_type = event.get("type")
+                        
+                        if event_type == "transcription":
+                            # ASR transcription of user speech
+                            transcription_text = event.get("text", "")
+                            ctx.add_message("user", transcription_text)
                             
                             ws.send(json.dumps({
-                                "type": "audio_end"
+                                "type": "transcription",
+                                "text": transcription_text,
+                                "role": "user"
                             }))
                         
-                        elif response.startswith("Coach"):
-                            coach_message = response.replace("Coach ▶", "").strip()
+                        elif event_type == "text":
+                            # Text response from the model
+                            text_response = event.get("text", "")
+                            ctx.add_message("assistant", text_response)
+                            
                             ws.send(json.dumps({
                                 "type": "text_response",
-                                "text": coach_message,
-                                "speaker": "Coach"
+                                "text": text_response,
+                                "speaker": "Assistant"
                             }))
                         
-                        elif response.startswith("System"):
-                            system_message = response.replace("System:", "").replace("System ▶", "").strip()
+                        elif event_type == "audio":
+                            # Audio response from the model
+                            audio_bytes = event.get("audio")
+                            if audio_bytes:
+                                ws.send(json.dumps({
+                                    "type": "audio_chunk",
+                                    "audio": base64.b64encode(audio_bytes).decode('utf-8'),
+                                    "format": event.get("format", "pcm")
+                                }))
+                        
+                        elif event_type == "toolUse":
+                            # Tool use notification
                             ws.send(json.dumps({
-                                "type": "system_message",
-                                "text": system_message
+                                "type": "tool_use",
+                                "toolName": event.get("name"),
+                                "toolUseId": event.get("toolUseId")
+                            }))
+                        
+                        elif event_type == "toolResult":
+                            # Tool result notification
+                            ws.send(json.dumps({
+                                "type": "tool_result",
+                                "toolUseId": event.get("toolUseId"),
+                                "result": event.get("result")
+                            }))
+                        
+                        elif event_type == "error":
+                            # Error during processing
+                            ws.send(json.dumps({
+                                "type": "error",
+                                "error": event.get("error")
+                            }))
+                        
+                        elif event_type == "completionEnd":
+                            # Processing complete
+                            ws.send(json.dumps({
+                                "type": "processing_complete",
+                                "stopReason": event.get("stopReason")
                             }))
                     
-                    ws.send(json.dumps({
-                        "type": "processing_complete"
-                    }))
+                    # Update prompt name for next interaction
+                    ctx.current_prompt_name = f"prompt_{uuid.uuid4().hex[:8]}"
                 
                 elif message_type == 'end_session':
                     # End the voice session
@@ -268,14 +366,14 @@ def voice_stream(ws):
                     "error": "Invalid JSON format"
                 }))
             except Exception as e:
-                logger.error(f"Error processing message: {e}")
+                logger.error(f"Error processing message: {e}", exc_info=True)
                 ws.send(json.dumps({
                     "type": "error",
                     "error": str(e)
                 }))
     
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket error: {e}", exc_info=True)
     finally:
         # Clean up session
         if session_id and session_id in voice_sessions:

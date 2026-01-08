@@ -1,447 +1,593 @@
-# Voice Interaction with Amazon Nova 2 Sonic - Implementation Guide
+# Amazon Nova 2 Sonic 语音交互功能指南
 
-## Overview
+## 概述
 
-This guide describes the voice interaction functionality implemented for the medical-rep-coach application using Amazon Nova 2 Sonic speech-to-speech model. The implementation enables real-time voice conversations between medical representatives and AI-powered doctor personas during training sessions.
+本项目集成了 Amazon Nova 2 Sonic 语音到语音模型，实现实时语音对话功能，并支持工具调用（Tool Use）。Nova 2 Sonic 通过双向流式 API 实现低延迟的语音交互体验，同时支持在对话过程中动态调用工具获取信息。
 
-## Architecture
+## 功能特性
 
-### Backend Components
+### ✅ 已实现功能
 
-#### 1. Voice Handler Module (`utils/voice_handler.py`)
+#### 后端功能
+- **AWS Bedrock Runtime 客户端配置**：使用双向流式 API 与 Nova Sonic 通信
+- **WebSocket 端点**：`/voice/stream` 支持实时音频流传输
+- **双向音频流**：
+  - 接收前端发送的音频数据
+  - 流式传输到 Nova Sonic 进行处理
+  - 将 Nova Sonic 的响应流式返回前端
+- **Nova Sonic 输出事件处理**：
+  - ASR 转录（用户语音转文字）
+  - 文本响应（模型的文字回答）
+  - 音频响应（模型的语音输出）
+  - 工具使用事件（Tool Use）
+- **工具配置和执行**：
+  - 使用 `promptStart` 事件的 `toolConfig` 字段配置工具
+  - Nova 2 Sonic 特定格式：包含 `toolSpec` 的工具定义
+  - 处理模型返回的 `toolUse` 事件
+  - 执行工具并通过 `toolResult` 事件返回结果
+- **对话上下文维护**：跨音频交互保持对话历史
+- **错误处理**：处理音频流中断和 API 失败
 
-The `NovaSonicVoiceHandler` class manages the integration with AWS Bedrock Runtime API:
+#### 工具集成
+项目集成了以下工具，可在语音对话中被 Nova Sonic 调用：
 
-- **Bidirectional Streaming**: Handles real-time audio streaming to and from Amazon Nova 2 Sonic
-- **Event Processing**: Processes ASR transcriptions, text responses, and audio outputs
-- **Conversation Context**: Maintains conversation state across voice exchanges
+1. **scenario_tool**：生成医生人设和场景开场白
+2. **objection_tool**：列出常见异议和应对要点
+3. **eval_tool**：评估医药代表回答的准确性和合规性
 
-**Key Methods:**
-- `stream_audio_to_nova()`: Streams audio input and yields response events
-- `process_text_to_speech()`: Converts text to speech using Nova Sonic
-- `build_request_body()`: Constructs API requests with configuration
+#### 前端功能
+- **麦克风访问和音频录制**：使用 Web Audio API
+- **WebSocket 客户端**：实时音频流传输
+- **音频播放**：播放 Nova Sonic 的语音响应
+- **可视化指示器**：
+  - 录音状态指示
+  - 流式传输状态
+  - 语音活动检测
+- **按键说话/语音激活控制**
+- **文本聊天界面**：与语音界面并存
+- **转录显示**：显示用户语音和 AI 响应的文字
 
-The `ConversationContext` class maintains the conversation state:
-- Stores message history
-- Tracks doctor persona information
-- Manages session state
+### 医疗培训流程集成
+- **医生人设场景**：语音交互配合现有医生人设
+- **医药代表响应**：支持语音输入回答
+- **医生问题和教练反馈**：支持语音输出
+- **对话历史保存**：包含语音交互的完整记录
 
-#### 2. WebSocket Endpoint (`main.py`)
+## 技术架构
 
-The `/voice/stream` WebSocket endpoint handles real-time bidirectional communication:
+### Nova 2 Sonic 双向流式 API 工作流程
 
-**Message Types:**
-- `start_session`: Initialize a new voice session
-- `audio_chunk`: Stream audio data from client
-- `audio_end`: Signal end of audio input
-- `end_session`: Terminate the voice session
+Nova 2 Sonic 使用特殊的双向流式 API，与标准的 Bedrock Converse API 不同。工作流程如下：
 
-**Response Types:**
-- `connected`: Confirm WebSocket connection
-- `transcription`: ASR output of user speech
-- `text_response`: Text response from AI
-- `audio_chunk`: TTS audio data
-- `processing`: Status updates
-- `error`: Error messages
+#### 1. 会话初始化
 
-#### 3. HTTP Endpoint
-
-`/voice/status` - Returns voice functionality availability status
-
-### Frontend Components
-
-#### 1. Voice Controls UI
-
-**Voice Control Panel:**
-- Toggle button for starting/stopping recording
-- Visual status indicators (recording, processing, speaking)
-- Real-time status text updates
-
-**Visual States:**
-- **Idle** (gray): Ready to record
-- **Recording** (red, pulsing): Actively capturing audio
-- **Processing** (yellow, pulsing): Processing speech
-- **Speaking** (blue, pulsing): AI is responding with audio
-
-#### 2. Audio Recording
-
-Uses Web Audio API to capture microphone input:
-
-```javascript
-navigator.mediaDevices.getUserMedia({
-    audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: 16000
+```python
+# 发送 sessionStart 事件
+{
+    "sessionStart": {
+        "sessionId": "unique-session-id",
+        "inferenceConfig": {
+            "temperature": 0.7,
+            "maxTokens": 1500
+        }
     }
-})
-```
-
-**Features:**
-- Echo cancellation for better quality
-- Noise suppression
-- Automatic gain control
-- Optimized 16kHz sample rate
-
-#### 3. WebSocket Client
-
-Manages bidirectional communication with backend:
-
-- Automatic connection establishment
-- Message queuing during disconnection
-- Error handling and retry logic
-- Session management
-
-#### 4. Audio Playback
-
-Implements audio playback queue for streaming responses:
-
-- Buffers incoming audio chunks
-- Sequential playback
-- Status updates during playback
-
-#### 5. Integration with Chat Interface
-
-Voice interactions are seamlessly integrated:
-
-- ASR transcriptions displayed in chat window
-- Text responses shown in chat
-- Coach feedback appears in evaluation panel
-- Maintains consistency with text-based chat
-
-## Configuration
-
-### Environment Variables (.env.example)
-
-```bash
-# AWS Credentials (required)
-AWS_ACCESS_KEY_ID="YOUR_AWS_ACCESS_KEY_ID"
-AWS_SECRET_ACCESS_KEY="YOUR_AWS_SECRET_ACCESS_KEY"
-AWS_REGION="YOUR_AWS_REGION"
-
-# Amazon Nova 2 Sonic Configuration
-NOVA_SONIC_MODEL_ID="amazon.nova-sonic-v2:0"
-NOVA_SONIC_VOICE="en-US-Neutral"          # Voice for TTS
-NOVA_SONIC_LANGUAGE="en-US"               # Language for ASR/TTS
-NOVA_SONIC_TEMPERATURE="0.7"              # Model temperature
-```
-
-### Required Dependencies
-
-Added to `requirements.txt`:
-- `boto3` - AWS SDK for Python
-- `websockets` - WebSocket support
-- `flask-sock` - Flask WebSocket extension
-
-## Usage Flow
-
-### 1. Starting a Training Session
-
-1. User configures drug, department, and difficulty
-2. Clicks "Start" to begin training
-3. Voice toggle button becomes enabled
-
-### 2. Voice Interaction
-
-1. **Start Recording**: Click "启用语音" button
-   - Microphone access requested (first time)
-   - WebSocket connection established
-   - Recording begins
-
-2. **Speaking**: Talk into the microphone
-   - Visual indicator shows recording status
-   - Audio is buffered locally
-
-3. **Stop Recording**: Click "停止录音"
-   - Audio sent to backend via WebSocket
-   - Backend streams to Nova Sonic
-   - Processing status displayed
-
-4. **Response**: AI responds
-   - ASR transcription displayed in chat
-   - Coach evaluation shown in evaluation panel
-   - Doctor response appears in chat
-   - TTS audio plays automatically
-
-### 3. Conversation Flow
-
-The voice interaction maintains the same training flow as text chat:
-
-```
-User (Voice) → ASR → Agent Processing → Doctor Response + Coach Feedback
-                                              ↓
-                                           TTS Audio
-```
-
-## Error Handling
-
-### Backend Error Scenarios
-
-1. **AWS Credentials Missing**: Voice handler initialization fails gracefully, voice features disabled
-2. **WebSocket Connection Failure**: Error message sent to client
-3. **Bedrock API Errors**: Caught and returned as error events
-4. **Audio Processing Errors**: Logged and communicated to frontend
-
-### Frontend Error Scenarios
-
-1. **Microphone Access Denied**: User notification displayed
-2. **WebSocket Connection Lost**: Automatic reconnection attempted
-3. **Audio Playback Failure**: Error logged, graceful degradation
-4. **Browser Compatibility**: Feature detection and fallbacks
-
-## Browser Compatibility
-
-**Supported Browsers:**
-- Chrome/Edge 80+
-- Firefox 75+
-- Safari 14+
-- Opera 67+
-
-**Required Features:**
-- Web Audio API
-- MediaRecorder API
-- WebSocket support
-- ES6+ JavaScript
-
-## API Integration Details
-
-### AWS Bedrock Runtime API
-
-The implementation uses the Bedrock Runtime API's `invoke_model` method. For production use with true bidirectional streaming, you may need to use specialized streaming APIs when they become available.
-
-**Current Implementation:**
-- Request/response pattern with audio data
-- Audio encoded as base64 in JSON
-- Event-based response processing
-
-**Future Enhancement:**
-The code structure supports migration to true bidirectional streaming APIs when available:
-```python
-# Future API pattern (conceptual)
-response = bedrock_runtime.invoke_model_with_bidirectional_stream(
-    modelId=model_id,
-    inputStream=audio_generator,
-    outputStream=response_handler
-)
-```
-
-## Performance Considerations
-
-### Audio Quality vs. Bandwidth
-
-**Current Settings:**
-- Sample rate: 16kHz (optimized for speech)
-- Format: WebM (browser native)
-- Chunk size: 1 second
-
-**Optimization Options:**
-- Adjust chunk size for latency vs. reliability tradeoff
-- Use different audio formats based on browser support
-- Implement adaptive bitrate based on connection quality
-
-### Latency Components
-
-1. **Recording**: ~1 second chunks
-2. **Transmission**: Network dependent
-3. **Processing**: Nova Sonic inference time
-4. **Playback**: Minimal buffering
-
-**Total Expected Latency**: 2-4 seconds for complete response
-
-## Security Considerations
-
-### Audio Data
-
-- Audio transmitted over WebSocket (consider WSS for production)
-- No audio stored on server by default
-- Client-side audio cleared after transmission
-
-### Authentication
-
-Current implementation uses same authentication as text chat. For production:
-
-- Implement WebSocket authentication
-- Use secure WebSocket (WSS)
-- Add rate limiting
-- Validate audio data size/format
-
-## Testing
-
-### Manual Testing Checklist
-
-- [ ] Voice button enables after backend check
-- [ ] Microphone permission requested correctly
-- [ ] Recording indicator shows during capture
-- [ ] Audio stops recording on button click
-- [ ] Transcription appears in chat
-- [ ] Doctor response shows correctly
-- [ ] Coach evaluation updates in real-time
-- [ ] Audio playback works (when implemented)
-- [ ] Error states handled gracefully
-- [ ] WebSocket reconnection works
-
-### Integration Testing
-
-Test the complete flow:
-1. Start training session
-2. Send voice message
-3. Verify ASR transcription
-4. Verify agent response
-5. Verify audio playback
-6. End session cleanly
-
-## Troubleshooting
-
-### Common Issues
-
-**Voice button stays disabled:**
-- Check backend is running
-- Verify `/voice/status` endpoint returns `enabled: true`
-- Check AWS credentials are configured
-
-**No audio capturing:**
-- Verify microphone permissions in browser
-- Check browser console for errors
-- Test with different microphone
-
-**WebSocket connection fails:**
-- Verify Flask server is running
-- Check CORS settings
-- Verify port 5000 is accessible
-
-**No audio playback:**
-- Check browser audio permissions
-- Verify audio format compatibility
-- Check console for decode errors
-
-## Future Enhancements
-
-### Planned Features
-
-1. **Voice Activity Detection (VAD)**
-   - Automatic start/stop based on speech detection
-   - Reduce manual button clicks
-
-2. **Audio Visualization**
-   - Waveform display during recording
-   - Volume meter
-
-3. **Multi-language Support**
-   - Chinese language support
-   - Language selection in UI
-
-4. **Audio History**
-   - Save and replay previous voice interactions
-   - Export audio recordings
-
-5. **Advanced Audio Processing**
-   - Background noise reduction
-   - Audio quality enhancement
-   - Echo cancellation improvements
-
-6. **Performance Monitoring**
-   - Latency tracking
-   - Quality metrics
-   - Usage analytics
-
-## Code Examples
-
-### Starting a Voice Session (Backend)
-
-```python
-@sock.route('/voice/stream')
-def voice_stream(ws):
-    conversation_context = ConversationContext()
-    
-    # Wait for start_session message
-    message = ws.receive()
-    data = json.loads(message)
-    
-    if data['type'] == 'start_session':
-        session_id = data['session_id']
-        voice_sessions[session_id] = conversation_context
-        
-        ws.send(json.dumps({
-            "type": "session_started",
-            "session_id": session_id
-        }))
-```
-
-### Recording Audio (Frontend)
-
-```javascript
-async function startRecording() {
-    const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mediaRecorder = new MediaRecorder(mediaStream);
-    
-    mediaRecorder.ondataavailable = (event) => {
-        audioChunks.push(event.data);
-    };
-    
-    mediaRecorder.start(1000); // 1-second chunks
 }
 ```
 
-### Processing Voice Response (Backend)
+#### 2. 提示开始（包含工具配置）
 
 ```python
-async for event in voice_handler.stream_audio_to_nova(
-    audio_chunks, 
-    system_prompt, 
-    conversation_history
-):
-    if event['type'] == 'transcription':
-        ws.send(json.dumps({
-            "type": "transcription",
-            "text": event['text']
-        }))
-    elif event['type'] == 'audio':
-        ws.send(json.dumps({
-            "type": "audio_chunk",
-            "audio": base64.b64encode(event['audio']).decode()
-        }))
+# 发送 promptStart 事件，配置工具
+{
+    "promptStart": {
+        "promptName": "unique-prompt-name",
+        "sessionId": "session-id",
+        "system": [{"text": "System prompt"}],
+        "audioConfig": {
+            "voice": "en-US-Neutral",
+            "language": "en-US"
+        },
+        "toolConfig": {
+            "tools": [
+                {
+                    "toolSpec": {
+                        "name": "scenario_tool",
+                        "description": "Generate doctor persona and opening line",
+                        "inputSchema": {
+                            "json": {
+                                "type": "object",
+                                "properties": {
+                                    "drug": {"type": "string"},
+                                    "specialty": {"type": "string"}
+                                },
+                                "required": ["drug", "specialty"]
+                            }
+                        }
+                    }
+                }
+            ],
+            "toolChoice": {"auto": {}}
+        }
+    }
+}
 ```
 
-## Maintenance
+#### 3. 音频流传输
 
-### Logging
+```python
+# 发送音频数据块
+{
+    "audioChunk": {
+        "promptName": "prompt-name",
+        "sessionId": "session-id",
+        "audio": b"raw audio bytes"
+    }
+}
 
-The implementation includes comprehensive logging:
-- WebSocket connection events
-- Audio processing steps
-- Error conditions
-- Session lifecycle
+# 音频结束
+{
+    "audioEnd": {
+        "promptName": "prompt-name",
+        "sessionId": "session-id"
+    }
+}
+```
 
-Log levels:
-- INFO: Normal operations
-- WARNING: Non-critical issues
-- ERROR: Failures requiring attention
+#### 4. 处理输出事件
 
-### Monitoring Recommendations
+Nova Sonic 返回的事件序列：
 
-1. Track voice session success rate
-2. Monitor average response latency
-3. Log API error rates
-4. Monitor WebSocket connection stability
+```python
+# 1. 完成开始
+{"completionStart": {"sessionId": "...", "promptName": "...", "completionId": "..."}}
 
-## Support and Documentation
+# 2. ASR 转录（用户说的话）
+{"contentStart": {"contentType": "text", "role": "USER"}}
+{"text": "转录的用户语音文本"}
+{"contentEnd": {}}
 
-### Additional Resources
+# 3. 工具使用（如果模型决定调用工具）
+{"contentStart": {"contentType": "toolUse"}}
+{
+    "toolUse": {
+        "toolUseId": "tool-use-id-123",
+        "name": "scenario_tool",
+        "input": {
+            "drug": "阿司匹林",
+            "specialty": "心内科"
+        }
+    }
+}
+{"contentEnd": {}}
 
-- [AWS Bedrock Documentation](https://docs.aws.amazon.com/bedrock/)
-- [Amazon Nova Models](https://aws.amazon.com/bedrock/nova/)
-- [Web Audio API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API)
-- [WebSocket API](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
+# 4. 文本响应（模型计划说的话）
+{"contentStart": {"contentType": "text", "role": "ASSISTANT"}}
+{"text": "模型的文本响应"}
+{"contentEnd": {}}
 
-### Getting Help
+# 5. 音频响应（模型的语音）
+{"contentStart": {"contentType": "audio"}}
+{"audio": {"bytes": b"audio data", "format": "pcm"}}
+{"contentEnd": {}}
 
-For issues or questions:
-1. Check the troubleshooting section
-2. Review browser console logs
-3. Check server logs for errors
-4. Verify AWS credentials and permissions
+# 6. 完成结束
+{"completionEnd": {"stopReason": "end_turn"}}
+```
 
----
+#### 5. 工具结果返回
 
-**Note**: This implementation provides a foundation for voice interaction. The actual AWS Bedrock Runtime API for Amazon Nova 2 Sonic may have specific requirements or different method signatures. Adjust the `voice_handler.py` implementation based on the official AWS SDK documentation for Nova Sonic when available.
+当模型调用工具后，需要发送工具执行结果：
+
+```python
+# 发送 toolResult 事件
+{
+    "toolResult": {
+        "promptName": "prompt-name",
+        "sessionId": "session-id",
+        "toolUseId": "tool-use-id-123",
+        "content": [
+            {"text": "工具执行结果"}
+        ]
+    }
+}
+```
+
+模型会接收工具结果后继续生成响应。
+
+## 配置说明
+
+### 环境变量
+
+在 `.env` 文件中配置以下变量：
+
+```bash
+# AWS 凭证
+AWS_ACCESS_KEY_ID="your-access-key"
+AWS_SECRET_ACCESS_KEY="your-secret-key"
+AWS_REGION="us-east-1"
+
+# Bedrock 模型配置（用于文本聊天）
+BEDROCK_MODEL_ID="anthropic.claude-3-sonnet-20240229-v1:0"
+
+# Nova 2 Sonic 语音配置
+NOVA_SONIC_MODEL_ID="amazon.nova-sonic-v2:0"
+NOVA_SONIC_VOICE="en-US-Neutral"
+NOVA_SONIC_LANGUAGE="en-US"
+NOVA_SONIC_TEMPERATURE="0.7"
+```
+
+### 支持的语音选项
+
+Nova 2 Sonic 支持多种语音和语言：
+
+- **英语**：`en-US-Neutral`, `en-US-Female`, `en-US-Male`
+- **中文**：`zh-CN-Neutral`, `zh-CN-Female`, `zh-CN-Male`
+- 更多语言请参考 AWS 文档
+
+## 工具定义格式
+
+### Nova 2 Sonic 工具定义结构
+
+```python
+{
+    "name": "tool_name",
+    "description": "Clear description of what the tool does",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "param1": {
+                "type": "string",
+                "description": "Description of param1"
+            },
+            "param2": {
+                "type": "string",
+                "enum": ["option1", "option2"],
+                "description": "Description of param2"
+            }
+        },
+        "required": ["param1"]
+    }
+}
+```
+
+### 工具注册
+
+在 `main.py` 中注册工具处理函数：
+
+```python
+voice_handler = NovaSonicVoiceHandler()
+
+# 注册工具
+voice_handler.register_tool("scenario_tool", scenario_tool)
+voice_handler.register_tool("objection_tool", objection_tool)
+voice_handler.register_tool("eval_tool", eval_tool)
+```
+
+### 工具执行流程
+
+1. 客户端发送音频输入
+2. Nova Sonic 处理并决定是否需要调用工具
+3. 如果需要，返回 `toolUse` 事件
+4. 服务器执行工具函数
+5. 发送 `toolResult` 事件给模型
+6. 模型使用工具结果生成最终响应
+
+## API 端点
+
+### 1. 检查语音功能状态
+
+```http
+GET /voice/status
+```
+
+**响应示例**：
+```json
+{
+    "enabled": true,
+    "model": "amazon.nova-sonic-v2:0"
+}
+```
+
+### 2. WebSocket 语音流
+
+```
+ws://localhost:5000/voice/stream
+```
+
+#### 消息格式
+
+**客户端 → 服务器**：
+
+1. 开始会话
+```json
+{
+    "type": "start_session",
+    "session_id": "unique-session-id",
+    "system_prompt": "你是一个医药代表培训协调员。",
+    "doctor_persona": {...}
+}
+```
+
+2. 发送音频块
+```json
+{
+    "type": "audio_chunk",
+    "audio": "base64-encoded-audio-data"
+}
+```
+
+3. 音频结束
+```json
+{
+    "type": "audio_end"
+}
+```
+
+4. 结束会话
+```json
+{
+    "type": "end_session"
+}
+```
+
+**服务器 → 客户端**：
+
+1. 连接确认
+```json
+{
+    "type": "connected",
+    "message": "Voice stream connected"
+}
+```
+
+2. ASR 转录
+```json
+{
+    "type": "transcription",
+    "text": "用户说的话",
+    "role": "user"
+}
+```
+
+3. 文本响应
+```json
+{
+    "type": "text_response",
+    "text": "AI 的文字回答",
+    "speaker": "Assistant"
+}
+```
+
+4. 音频响应
+```json
+{
+    "type": "audio_chunk",
+    "audio": "base64-encoded-audio",
+    "format": "pcm"
+}
+```
+
+5. 工具使用通知
+```json
+{
+    "type": "tool_use",
+    "toolName": "scenario_tool",
+    "toolUseId": "tool-use-id"
+}
+```
+
+6. 工具结果通知
+```json
+{
+    "type": "tool_result",
+    "toolUseId": "tool-use-id",
+    "result": {...}
+}
+```
+
+7. 处理完成
+```json
+{
+    "type": "processing_complete",
+    "stopReason": "end_turn"
+}
+```
+
+## 前端集成示例
+
+### HTML 结构
+
+```html
+<div id="voice-controls">
+    <button id="start-recording" class="voice-btn">
+        🎤 开始录音
+    </button>
+    <button id="stop-recording" class="voice-btn" disabled>
+        ⏹️ 停止录音
+    </button>
+    <div id="voice-status">准备就绪</div>
+</div>
+
+<div id="transcription-display">
+    <!-- 显示转录和响应 -->
+</div>
+```
+
+### JavaScript WebSocket 连接
+
+```javascript
+// 连接 WebSocket
+const ws = new WebSocket('ws://localhost:5000/voice/stream');
+
+// 音频上下文
+let audioContext;
+let mediaRecorder;
+let sessionId;
+
+ws.onopen = () => {
+    console.log('WebSocket connected');
+    
+    // 开始会话
+    sessionId = generateSessionId();
+    ws.send(JSON.stringify({
+        type: 'start_session',
+        session_id: sessionId,
+        system_prompt: '你是一个医药代表培训协调员。'
+    }));
+};
+
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    
+    switch(data.type) {
+        case 'transcription':
+            displayTranscription(data.text, 'user');
+            break;
+        case 'text_response':
+            displayTranscription(data.text, 'assistant');
+            break;
+        case 'audio_chunk':
+            playAudioChunk(data.audio, data.format);
+            break;
+        case 'tool_use':
+            console.log(`Tool being used: ${data.toolName}`);
+            break;
+        case 'processing_complete':
+            console.log('Processing complete');
+            break;
+    }
+};
+
+// 开始录音
+async function startRecording() {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new AudioContext({ sampleRate: 16000 });
+    
+    mediaRecorder = new MediaRecorder(stream);
+    
+    mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+            // 转换为 base64 并发送
+            const reader = new FileReader();
+            reader.onload = () => {
+                const base64Audio = btoa(reader.result);
+                ws.send(JSON.stringify({
+                    type: 'audio_chunk',
+                    audio: base64Audio
+                }));
+            };
+            reader.readAsBinaryString(event.data);
+        }
+    };
+    
+    mediaRecorder.start(100); // 每 100ms 发送一次
+}
+
+// 停止录音
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        ws.send(JSON.stringify({ type: 'audio_end' }));
+    }
+}
+```
+
+## 使用场景示例
+
+### 场景 1：基本语音对话
+
+用户通过麦克风说话，Nova Sonic 识别语音、生成文本响应和语音响应。
+
+### 场景 2：语音触发工具调用
+
+用户说："请帮我设置一个心内科医生的培训场景，药品是阿司匹林。"
+
+Nova Sonic 识别后调用 `scenario_tool`，生成医生人设和开场白。
+
+### 场景 3：多轮对话与工具
+
+1. 用户语音输入医药代表的回答
+2. Nova Sonic 调用 `eval_tool` 评估回答
+3. 返回评分和改进建议（文本 + 语音）
+
+## 最佳实践
+
+### 工具定义
+- **清晰的描述**：工具描述要准确，帮助模型理解何时使用
+- **参数说明**：每个参数都要有详细的 description
+- **必需参数**：明确指定 required 字段
+
+### 系统提示
+- **引导工具使用**：在系统提示中说明可用的工具
+- **设定角色**：明确 AI 的角色和任务
+- **语言风格**：指定期望的回答风格
+
+### 错误处理
+- **网络中断**：检测 WebSocket 连接状态
+- **音频质量**：处理低质量音频输入
+- **工具执行失败**：返回有意义的错误信息
+
+### 性能优化
+- **音频缓冲**：合理设置音频块大小
+- **并发控制**：限制同时进行的会话数
+- **资源清理**：及时清理结束的会话
+
+## 故障排除
+
+### 问题 1：语音无法识别
+
+**可能原因**：
+- 麦克风权限未授予
+- 音频格式不正确
+- 采样率不匹配
+
+**解决方案**：
+- 检查浏览器麦克风权限
+- 确保音频格式为 PCM 16kHz
+- 查看浏览器控制台错误信息
+
+### 问题 2：工具未被调用
+
+**可能原因**：
+- 工具定义不清晰
+- 系统提示未提及工具
+- 用户输入与工具功能不匹配
+
+**解决方案**：
+- 改进工具 description
+- 在系统提示中明确说明工具功能
+- 调整 temperature 参数（降低以提高确定性）
+
+### 问题 3：连接中断
+
+**可能原因**：
+- 网络不稳定
+- AWS 凭证过期
+- Bedrock 配额超限
+
+**解决方案**：
+- 实现自动重连机制
+- 刷新 AWS 凭证
+- 检查 AWS 账户配额
+
+## 参考资料
+
+- [Amazon Nova 2 Sonic User Guide](https://docs.aws.amazon.com/nova/latest/nova2-userguide/)
+- [Nova Sonic Tool Configuration](https://docs.aws.amazon.com/nova/latest/nova2-userguide/sonic-tool-configuration.html)
+- [Bidirectional Streaming API](https://docs.aws.amazon.com/nova/latest/userguide/input-events.html)
+- [Tool Use Documentation](https://docs.aws.amazon.com/nova/latest/userguide/speech-tools-use.html)
+
+## 更新日志
+
+### v2.0 - 2026-01-08
+- ✅ 实现 Nova 2 Sonic 双向流式 API 集成
+- ✅ 添加工具配置支持（promptStart.toolConfig）
+- ✅ 实现 toolUse 事件处理
+- ✅ 实现 toolResult 事件发送
+- ✅ 集成三个医疗培训工具（scenario, objection, eval）
+- ✅ 完善错误处理和日志记录
+- 🔧 修复工具解析问题（相比 v1.0）
+
+### v1.0 - 2026-01-07
+- ❌ 初始实现（存在工具使用解析问题）
+- ⚠️ 已回滚

@@ -2,7 +2,7 @@ strands-agents
 strands-agents-tools
 flask
 flask_cors
+flask-sock
 python-dotenv
 boto3
-websockets
-flask-sock
+botocore
