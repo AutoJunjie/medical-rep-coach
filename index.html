@@ -256,11 +256,49 @@
             background-color: #0056b3;
         }
         
+        .input-area button#mic-btn {
+            padding: 10px 15px;
+            background-color: #28a745;
+            position: relative;
+        }
+        
+        .input-area button#mic-btn:hover {
+            background-color: #218838;
+        }
+        
+        .input-area button#mic-btn.recording {
+            background-color: #dc3545;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .input-area button#mic-btn.recording:hover {
+            background-color: #c82333;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
         .input-area button#end-training-btn {
             background-color: #dc3545;
         }
         .input-area button#end-training-btn:hover {
             background-color: #c82333;
+        }
+        
+        .recording-indicator {
+            display: none;
+            position: absolute;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #dc3545;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.8em;
+            white-space: nowrap;
         }
 
         .summary-report {
@@ -325,6 +363,10 @@
     
             <div class="input-area">
                 <textarea id="user-input" placeholder="请输入您的回复..." rows="2"></textarea>
+                <button id="mic-btn" title="语音输入">
+                    🎤
+                    <span class="recording-indicator" id="recording-indicator">录音中...</span>
+                </button>
                 <button id="send-btn">发送</button>
                 <button id="end-training-btn">结束训练</button>
             </div>
@@ -359,6 +401,8 @@
         const sendBtn = document.getElementById('send-btn');
         const startBtn = document.getElementById('start-btn');
         const endTrainingBtn = document.getElementById('end-training-btn');
+        const micBtn = document.getElementById('mic-btn');
+        const recordingIndicator = document.getElementById('recording-indicator');
         const drugNameInput = document.getElementById('drug-name');
         const departmentInput = document.getElementById('department');
         const difficultySelect = document.getElementById('difficulty');
@@ -372,10 +416,150 @@
 
         let conversationActive = false;
         let currentDoctorName = "医生"; // Default doctor name
+        
+        // 语音录音相关变量
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+        let recordingStartTime = null;
+        let recordingTimer = null;
 
         function showLoading(show) {
             loadingSpinner.style.display = show ? 'inline-block' : 'none';
         }
+        
+        // 格式化录音时间显示
+        function formatRecordingTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        // 开始录音
+        async function startRecording() {
+            try {
+                // 请求麦克风权限
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // 创建 MediaRecorder 实例
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    // 停止所有音频轨道
+                    stream.getTracks().forEach(track => track.stop());
+                    
+                    // 创建音频 Blob
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    
+                    // 发送到后端进行转录
+                    await transcribeAudio(audioBlob);
+                };
+                
+                // 开始录音
+                mediaRecorder.start();
+                isRecording = true;
+                recordingStartTime = Date.now();
+                
+                // 更新 UI
+                micBtn.classList.add('recording');
+                recordingIndicator.style.display = 'block';
+                
+                // 启动计时器
+                let elapsedSeconds = 0;
+                recordingTimer = setInterval(() => {
+                    elapsedSeconds++;
+                    recordingIndicator.textContent = `录音中 ${formatRecordingTime(elapsedSeconds)}`;
+                }, 1000);
+                
+            } catch (error) {
+                console.error('获取麦克风权限失败:', error);
+                if (error.name === 'NotAllowedError') {
+                    addMessage("System", "麦克风权限被拒绝。请在浏览器设置中允许麦克风访问。", 'system');
+                } else if (error.name === 'NotFoundError') {
+                    addMessage("System", "未找到麦克风设备。请确保已连接麦克风。", 'system');
+                } else {
+                    addMessage("System", `启动录音失败: ${error.message}`, 'system');
+                }
+            }
+        }
+        
+        // 停止录音
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                
+                // 清除计时器
+                if (recordingTimer) {
+                    clearInterval(recordingTimer);
+                    recordingTimer = null;
+                }
+                
+                // 更新 UI
+                micBtn.classList.remove('recording');
+                recordingIndicator.style.display = 'none';
+                recordingIndicator.textContent = '录音中...';
+            }
+        }
+        
+        // 将音频发送到后端进行转录
+        async function transcribeAudio(audioBlob) {
+            showLoading(true);
+            
+            try {
+                // 创建 FormData 对象
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'recording.webm');
+                
+                // 发送到后端
+                const response = await fetch('http://127.0.0.1:5000/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: "转录请求失败" }));
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.text) {
+                    // 将转录文本填充到输入框
+                    userInput.value = data.text;
+                    userInput.style.height = 'auto';
+                    userInput.style.height = userInput.scrollHeight + 'px';
+                    
+                    // 显示提示消息
+                    addMessage("System", "语音转录完成，请检查文本后点击发送。", 'system');
+                } else {
+                    addMessage("System", "转录结果为空。", 'system');
+                }
+                
+            } catch (error) {
+                console.error('转录失败:', error);
+                addMessage("System", `语音转录失败: ${error.message}`, 'system');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        // 麦克风按钮点击事件
+        micBtn.addEventListener('click', () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
+
 
         function addMessage(sender, text, type) {
             const messageDiv = document.createElement('div');
