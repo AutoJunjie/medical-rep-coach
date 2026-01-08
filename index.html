@@ -262,6 +262,91 @@
         .input-area button#end-training-btn:hover {
             background-color: #c82333;
         }
+        
+        /* Voice Control Styles */
+        .voice-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #eee;
+        }
+        
+        .voice-controls button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .voice-controls button#voice-toggle-btn {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        .voice-controls button#voice-toggle-btn:hover {
+            background-color: #218838;
+        }
+        
+        .voice-controls button#voice-toggle-btn.recording {
+            background-color: #dc3545;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .voice-controls button#voice-toggle-btn.recording:hover {
+            background-color: #c82333;
+        }
+        
+        .voice-controls button#voice-toggle-btn:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .voice-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9em;
+            color: #555;
+        }
+        
+        .voice-indicator .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #6c757d;
+        }
+        
+        .voice-indicator .status-dot.idle {
+            background-color: #6c757d;
+        }
+        
+        .voice-indicator .status-dot.recording {
+            background-color: #dc3545;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .voice-indicator .status-dot.processing {
+            background-color: #ffc107;
+            animation: pulse 1s infinite;
+        }
+        
+        .voice-indicator .status-dot.speaking {
+            background-color: #007bff;
+            animation: pulse 1s infinite;
+        }
 
         .summary-report {
             padding: 20px;
@@ -321,6 +406,17 @@
             <div class="summary-report" id="summary-report" style="display:none;">
                 <h3>训练总结报告</h3>
                 <div id="summary-content"></div>
+            </div>
+    
+            <div class="voice-controls">
+                <button id="voice-toggle-btn" disabled>
+                    <span id="voice-btn-icon">🎤</span>
+                    <span id="voice-btn-text">开始语音</span>
+                </button>
+                <div class="voice-indicator">
+                    <div class="status-dot idle" id="voice-status-dot"></div>
+                    <span id="voice-status-text">检查中...</span>
+                </div>
             </div>
     
             <div class="input-area">
@@ -541,6 +637,370 @@
                 addMessage("System", "当前没有正在进行的训练。", 'system');
             }
         });
+
+        // ==================== Voice Interaction ====================
+        
+        const voiceToggleBtn = document.getElementById('voice-toggle-btn');
+        const voiceBtnIcon = document.getElementById('voice-btn-icon');
+        const voiceBtnText = document.getElementById('voice-btn-text');
+        const voiceStatusDot = document.getElementById('voice-status-dot');
+        const voiceStatusText = document.getElementById('voice-status-text');
+        
+        let voiceEnabled = false;
+        let isRecording = false;
+        let audioContext = null;
+        let mediaStream = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let websocket = null;
+        let currentSessionId = null;
+        let audioPlaybackQueue = [];
+        let isPlayingAudio = false;
+        
+        // Check if voice functionality is available on the backend
+        async function checkVoiceAvailability() {
+            try {
+                const response = await fetch('http://127.0.0.1:5000/voice/status');
+                const data = await response.json();
+                
+                if (data.enabled) {
+                    voiceEnabled = true;
+                    voiceToggleBtn.disabled = false;
+                    voiceStatusText.textContent = '语音就绪';
+                    voiceStatusDot.className = 'status-dot idle';
+                    console.log('Voice functionality is available');
+                } else {
+                    voiceStatusText.textContent = '语音功能未启用';
+                    console.log('Voice functionality is not available');
+                }
+            } catch (error) {
+                console.error('Error checking voice availability:', error);
+                voiceStatusText.textContent = '语音功能检查失败';
+            }
+        }
+        
+        // Initialize audio context
+        function initAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000
+                });
+                console.log('Audio context initialized');
+            }
+        }
+        
+        // Request microphone access
+        async function requestMicrophoneAccess() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 16000
+                    } 
+                });
+                console.log('Microphone access granted');
+                return true;
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                addMessage("System", "无法访问麦克风。请确保已授予麦克风权限。", 'system');
+                return false;
+            }
+        }
+        
+        // Connect to WebSocket
+        function connectWebSocket() {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                return;
+            }
+            
+            websocket = new WebSocket('ws://127.0.0.1:5000/voice/stream');
+            
+            websocket.onopen = () => {
+                console.log('WebSocket connected');
+                currentSessionId = generateSessionId();
+                
+                // Start voice session
+                const startSessionMsg = {
+                    type: 'start_session',
+                    session_id: currentSessionId,
+                    system_prompt: '你是一个医药代表培训协调员。'
+                };
+                
+                websocket.send(JSON.stringify(startSessionMsg));
+            };
+            
+            websocket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleVoiceMessage(data);
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+            
+            websocket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                addMessage("System", "语音连接错误", 'system');
+            };
+            
+            websocket.onclose = () => {
+                console.log('WebSocket closed');
+                websocket = null;
+            };
+        }
+        
+        // Handle voice messages from server
+        function handleVoiceMessage(data) {
+            const type = data.type;
+            
+            switch(type) {
+                case 'connected':
+                    console.log('Voice stream connected');
+                    break;
+                    
+                case 'session_started':
+                    console.log('Voice session started:', data.session_id);
+                    break;
+                    
+                case 'audio_received':
+                    // Audio chunk acknowledged
+                    break;
+                    
+                case 'processing':
+                    voiceStatusText.textContent = data.message || '处理中...';
+                    voiceStatusDot.className = 'status-dot processing';
+                    break;
+                    
+                case 'transcription':
+                    // Display user's transcribed speech
+                    addMessage("User", data.text, 'user');
+                    break;
+                    
+                case 'text_response':
+                    // Display assistant's text response
+                    const speaker = data.speaker || 'Assistant';
+                    addMessage(speaker, data.text, 'assistant');
+                    break;
+                    
+                case 'audio_chunk':
+                    // Queue audio for playback
+                    if (data.audio) {
+                        const audioBytes = base64ToArrayBuffer(data.audio);
+                        audioPlaybackQueue.push(audioBytes);
+                        
+                        if (!isPlayingAudio) {
+                            playNextAudioChunk();
+                        }
+                    }
+                    break;
+                    
+                case 'audio_start':
+                    voiceStatusText.textContent = '正在播放...';
+                    voiceStatusDot.className = 'status-dot speaking';
+                    break;
+                    
+                case 'audio_end':
+                    // Audio playback complete
+                    break;
+                    
+                case 'tool_use':
+                    console.log(`Tool being used: ${data.toolName}`);
+                    break;
+                    
+                case 'tool_result':
+                    console.log('Tool result received');
+                    break;
+                    
+                case 'processing_complete':
+                    voiceStatusText.textContent = '语音就绪';
+                    voiceStatusDot.className = 'status-dot idle';
+                    break;
+                    
+                case 'error':
+                    console.error('Voice error:', data.error);
+                    addMessage("System", `语音错误: ${data.error}`, 'system');
+                    voiceStatusText.textContent = '错误';
+                    voiceStatusDot.className = 'status-dot idle';
+                    break;
+                    
+                default:
+                    console.log('Unknown message type:', type);
+            }
+        }
+        
+        // Convert base64 to ArrayBuffer
+        function base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+        
+        // Play audio chunks from queue
+        async function playNextAudioChunk() {
+            if (audioPlaybackQueue.length === 0) {
+                isPlayingAudio = false;
+                return;
+            }
+            
+            isPlayingAudio = true;
+            const audioData = audioPlaybackQueue.shift();
+            
+            try {
+                if (!audioContext) {
+                    initAudioContext();
+                }
+                
+                // Decode and play audio
+                const audioBuffer = await audioContext.decodeAudioData(audioData);
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                
+                source.onended = () => {
+                    playNextAudioChunk();
+                };
+                
+                source.start();
+            } catch (error) {
+                console.error('Error playing audio:', error);
+                playNextAudioChunk(); // Continue with next chunk
+            }
+        }
+        
+        // Start recording audio
+        async function startRecording() {
+            if (!await requestMicrophoneAccess()) {
+                return;
+            }
+            
+            initAudioContext();
+            connectWebSocket();
+            
+            // Wait for WebSocket to connect
+            await new Promise(resolve => {
+                const checkConnection = setInterval(() => {
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        clearInterval(checkConnection);
+                        resolve();
+                    }
+                }, 100);
+            });
+            
+            // Configure MediaRecorder
+            const options = {
+                mimeType: 'audio/webm',
+                audioBitsPerSecond: 16000
+            };
+            
+            try {
+                mediaRecorder = new MediaRecorder(mediaStream, options);
+            } catch (e) {
+                // Fallback without options if not supported
+                mediaRecorder = new MediaRecorder(mediaStream);
+            }
+            
+            audioChunks = [];
+            
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0 && websocket && websocket.readyState === WebSocket.OPEN) {
+                    // Convert blob to base64 and send
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const arrayBuffer = reader.result;
+                        const base64Audio = arrayBufferToBase64(arrayBuffer);
+                        
+                        websocket.send(JSON.stringify({
+                            type: 'audio_chunk',
+                            audio: base64Audio
+                        }));
+                    };
+                    reader.readAsArrayBuffer(event.data);
+                    audioChunks.push(event.data);
+                }
+            };
+            
+            mediaRecorder.onstop = () => {
+                // Send audio_end signal
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send(JSON.stringify({
+                        type: 'audio_end'
+                    }));
+                }
+            };
+            
+            mediaRecorder.start(100); // Capture in 100ms chunks
+            isRecording = true;
+            
+            // Update UI
+            voiceToggleBtn.classList.add('recording');
+            voiceBtnIcon.textContent = '⏹️';
+            voiceBtnText.textContent = '停止录音';
+            voiceStatusText.textContent = '正在录音...';
+            voiceStatusDot.className = 'status-dot recording';
+            
+            console.log('Recording started');
+        }
+        
+        // Stop recording audio
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                
+                // Stop all tracks
+                if (mediaStream) {
+                    mediaStream.getTracks().forEach(track => track.stop());
+                    mediaStream = null;
+                }
+                
+                // Update UI
+                voiceToggleBtn.classList.remove('recording');
+                voiceBtnIcon.textContent = '🎤';
+                voiceBtnText.textContent = '开始语音';
+                voiceStatusText.textContent = '处理中...';
+                voiceStatusDot.className = 'status-dot processing';
+                
+                console.log('Recording stopped');
+            }
+        }
+        
+        // Convert ArrayBuffer to base64
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+        
+        // Generate unique session ID
+        function generateSessionId() {
+            return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        }
+        
+        // Voice toggle button click handler
+        voiceToggleBtn.addEventListener('click', () => {
+            if (!conversationActive) {
+                addMessage("System", "请先点击 Start 开始训练。", 'system');
+                return;
+            }
+            
+            if (!isRecording) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        });
+        
+        // Check voice availability on page load
+        checkVoiceAvailability();
 
     </script>
 </body>
